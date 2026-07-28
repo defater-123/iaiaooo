@@ -1,13 +1,15 @@
-name: GitHub VPS
+name: GitHub VPS Server
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # Ручной запуск
+  schedule:
+    - cron: '55 */5 * * *'  # Каждые 5 часов 55 минут
 
 jobs:
   vps:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
-
+    timeout-minutes: 350  # 5 часов 50 минут
+    
     steps:
       - name: Install Tailscale
         run: |
@@ -17,35 +19,33 @@ jobs:
         run: |
           sudo tailscaled &
           sleep 8
-          sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTHKEY }} --hostname=github-runner
+          sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTHKEY }} --hostname=github-vps
 
-      - name: Setup password and show all data
+      - name: Setup SSH password
         run: |
-          # Устанавливаем пароль
           PASSWORD="GitHubVPS2026"
           echo "runner:$PASSWORD" | sudo chpasswd
-          
-          # Получаем IP
+          echo "✅ Password set: $PASSWORD"
+
+      - name: Show connection info
+        run: |
           IP=$(tailscale ip -4)
-          
-          # Выводим всё красиво
           echo "=================================================="
-          echo "          ✅ ВСЁ ГОТОВО! ✅"
+          echo "          ✅ VPS IS READY ✅"
           echo "=================================================="
           echo ""
-          echo "  🌐 IP АДРЕС:  $IP"
-          echo "  🔑 ПАРОЛЬ:    $PASSWORD"
+          echo "  🌐 IP ADDRESS:  $IP"
+          echo "  🔑 PASSWORD:    GitHubVPS2026"
+          echo "  👤 USER:        runner"
           echo ""
           echo "=================================================="
-          echo "  КОМАНДА ДЛЯ ПОДКЛЮЧЕНИЯ:"
+          echo "  SSH COMMAND:"
           echo "  ssh runner@$IP"
-          echo "  Пароль: $PASSWORD"
           echo "=================================================="
           echo ""
-          echo "  СОХРАНИТЕ ЭТИ ДАННЫЕ!"
-          echo "  IP: $IP"
-          echo "  Пароль: $PASSWORD"
+          echo "  ✅ Server will run for ~5 hours 50 minutes"
+          echo "  🔄 Auto-restart every 5 hours 55 minutes"
           echo "=================================================="
 
       - name: Keep alive
-        run: sleep 21600
+        run: sleep 21000  # 5 часов 50 минут
