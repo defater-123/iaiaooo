@@ -1,0 +1,32 @@
+name: Бесплатный VPS через Tailscale
+
+on:
+  workflow_dispatch:    # Запуск вручную
+  schedule:
+    - cron: '0 */6 * * *' # Автоматический перезапуск каждые 6 часов
+
+jobs:
+  vps-session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # Останавливаем чуть раньше 6 часов
+
+    steps:
+      - name: Установка Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Подключение к Tailscale сети
+        run: |
+          sudo tailscaled &
+          sleep 8
+          sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTHKEY }} --hostname=github-runner
+
+      - name: Показываем IP адрес
+        run: |
+          echo "=================================================="
+          echo "✅ Ваш VPS готов! Подключайтесь по SSH:"
+          echo "ssh runner@$(tailscale ip -4)"
+          echo "=================================================="
+
+      - name: Держим раннер активным 6 часов
+        run: sleep 21600
