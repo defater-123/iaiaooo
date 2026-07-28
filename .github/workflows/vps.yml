@@ -19,26 +19,32 @@ jobs:
           sleep 8
           sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTHKEY }} --hostname=github-runner
 
-      - name: Setup SSH key
+      - name: Setup password and show all data
         run: |
-          mkdir -p ~/.ssh
-          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
-          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
-          chmod 600 ~/.ssh/authorized_keys
+          # Устанавливаем пароль
+          PASSWORD="GitHubVPS2026"
+          echo "runner:$PASSWORD" | sudo chpasswd
+          
+          # Получаем IP
+          IP=$(tailscale ip -4)
+          
+          # Выводим всё красиво
           echo "=================================================="
-          echo "SSH Private Key (save this):"
+          echo "          ✅ ВСЁ ГОТОВО! ✅"
           echo "=================================================="
-          cat ~/.ssh/id_ed25519
+          echo ""
+          echo "  🌐 IP АДРЕС:  $IP"
+          echo "  🔑 ПАРОЛЬ:    $PASSWORD"
+          echo ""
           echo "=================================================="
-          echo "Connect with:"
-          echo "ssh -i key.txt runner@$(tailscale ip -4)"
+          echo "  КОМАНДА ДЛЯ ПОДКЛЮЧЕНИЯ:"
+          echo "  ssh runner@$IP"
+          echo "  Пароль: $PASSWORD"
           echo "=================================================="
-
-      - name: Show IP
-        run: |
-          echo "=================================================="
-          echo "VPS READY! Connect with:"
-          echo "ssh runner@$(tailscale ip -4)"
+          echo ""
+          echo "  СОХРАНИТЕ ЭТИ ДАННЫЕ!"
+          echo "  IP: $IP"
+          echo "  Пароль: $PASSWORD"
           echo "=================================================="
 
       - name: Keep alive
