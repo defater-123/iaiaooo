@@ -1,14 +1,45 @@
-      - name: Настройка SSH ключа
+name: GitHub VPS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Connect to Tailscale
+        run: |
+          sudo tailscaled &
+          sleep 8
+          sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTHKEY }} --hostname=github-runner
+
+      - name: Setup SSH key
         run: |
           mkdir -p ~/.ssh
           ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
           cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
           chmod 600 ~/.ssh/authorized_keys
           echo "=================================================="
-          echo "🔑 ПРИВАТНЫЙ КЛЮЧ (сохраните в файл):"
+          echo "SSH Private Key (save this):"
           echo "=================================================="
           cat ~/.ssh/id_ed25519
           echo "=================================================="
-          echo "Подключайтесь командой:"
+          echo "Connect with:"
           echo "ssh -i key.txt runner@$(tailscale ip -4)"
           echo "=================================================="
+
+      - name: Show IP
+        run: |
+          echo "=================================================="
+          echo "VPS READY! Connect with:"
+          echo "ssh runner@$(tailscale ip -4)"
+          echo "=================================================="
+
+      - name: Keep alive
+        run: sleep 21600
