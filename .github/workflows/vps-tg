@@ -1,0 +1,86 @@
+name: GitHub VPS via Telegram Bot
+
+on:
+  workflow_dispatch:  # Ручной запуск
+  schedule:
+    - cron: '55 */5 * * *'  # Каждые 5 часов 55 минут
+
+jobs:
+  vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # 5 часов 50 минут
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Connect to Tailscale
+        run: |
+          sudo tailscaled &
+          sleep 8
+          sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTHKEY }} --hostname=github-vps
+
+      - name: Generate access code and SSH password
+        run: |
+          ACCESS_CODE=$(openssl rand -hex 4 | tr 'a-f' 'A-F')  # 8 символов
+          SSH_PASSWORD=$(openssl rand -base64 15 | tr -d '/+=')
+          
+          echo "ACCESS_CODE=$ACCESS_CODE" >> $GITHUB_ENV
+          echo "SSH_PASSWORD=$SSH_PASSWORD" >> $GITHUB_ENV
+          
+          # Устанавливаем пароль для пользователя runner
+          echo "runner:$SSH_PASSWORD" | sudo chpasswd
+          
+          echo "✅ Сгенерирован код доступа: $ACCESS_CODE"
+          echo "✅ SSH пароль установлен"
+
+      - name: Install Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip
+          pip3 install python-telegram-bot requests
+
+      - name: Start Telegram Bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
+          ADMIN_CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+        run: |
+          IP=$(tailscale ip -4)
+          
+          # Запускаем бота в фоне
+          python3 bot.py \
+            --token "$TELEGRAM_TOKEN" \
+            --code "$ACCESS_CODE" \
+            --password "$SSH_PASSWORD" \
+            --ip "$IP" \
+            --gist-token "$GIST_TOKEN" \
+            --gist-id "$GIST_ID" \
+            --admin-id "$ADMIN_CHAT_ID" &
+          
+          # Даём боту время на запуск
+          sleep 5
+          echo "✅ Telegram бот запущен"
+          
+          # Выводим информацию (безопасно, только код доступа)
+          echo "=================================================="
+          echo "          ✅ VPS IS READY ✅"
+          echo "=================================================="
+          echo ""
+          echo "  🔑 КОД ДОСТУПА: $ACCESS_CODE"
+          echo "  🌐 IP: $IP"
+          echo "  👤 Пользователь: runner"
+          echo "  📱 Бот: @ваш_бот_username"
+          echo ""
+          echo "=================================================="
+          echo "  🔐 Введите код доступа в Telegram боте"
+          echo "  ⏱️ Сервер активен ~5 часов 50 минут"
+          echo "=================================================="
+
+      - name: Keep alive
+        run: sleep 21000  # 5 часов 50 минут
