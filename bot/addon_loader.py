@@ -6,20 +6,20 @@
 
 import os
 import json
-import importlib
+import importlib.util
 import subprocess
 import sys
 from typing import Dict, List, Optional, Any
-from pathlib import Path
 
-# ==================== КОНФИГ ====================
+# КОНФИГ
 ADDONS_DIR = os.path.join(os.path.dirname(__file__), "addons")
 ADDONS_DATA = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Saves", "addons")
 
 os.makedirs(ADDONS_DIR, exist_ok=True)
 os.makedirs(ADDONS_DATA, exist_ok=True)
 
-# ==================== КЛАСС АДДОНА ====================
+print(f"📁 Папка аддонов: {ADDONS_DIR}")
+
 
 class Addon:
     """Класс для управления аддоном"""
@@ -32,20 +32,21 @@ class Addon:
         self.running = False
         self.process = None
         
-        # Загружаем состояние
         self.state_file = os.path.join(ADDONS_DATA, f"{folder}.json")
         self._load_state()
+        
+        print(f"✅ Загружен аддон: {self.config.get('name', folder)}")
     
     def _load_config(self) -> Dict:
         """Загружает конфиг аддона"""
         config_path = os.path.join(self.path, "addon.conf")
         config = {
-            'name': folder,
+            'name': self.folder,
             'version': '1.0.0',
             'author': 'Unknown',
             'description': 'No description',
             'startup': 'no',
-            'type': 'python',  # python или bash
+            'type': 'python',
             'main': 'main.py',
             'requirements': [],
             'commands': []
@@ -53,7 +54,7 @@ class Addon:
         
         if os.path.exists(config_path):
             try:
-                with open(config_path, 'r') as f:
+                with open(config_path, 'r', encoding='utf-8') as f:
                     for line in f:
                         line = line.strip()
                         if '=' in line and not line.startswith('[') and not line.startswith('#'):
@@ -80,12 +81,13 @@ class Addon:
                             elif key == 'commands':
                                 config['commands'] = [c.strip() for c in value.split(',') if c.strip()]
             except Exception as e:
-                print(f"⚠️ Ошибка загрузки конфига {folder}: {e}")
+                print(f"⚠️ Ошибка загрузки конфига {self.folder}: {e}")
+        else:
+            print(f"⚠️ Конфиг не найден: {config_path}")
         
         return config
     
     def _load_state(self):
-        """Загружает состояние аддона"""
         if os.path.exists(self.state_file):
             try:
                 with open(self.state_file, 'r') as f:
@@ -95,7 +97,6 @@ class Addon:
                 pass
     
     def _save_state(self):
-        """Сохраняет состояние аддона"""
         try:
             with open(self.state_file, 'w') as f:
                 json.dump({'running': self.running}, f, indent=2)
@@ -103,7 +104,6 @@ class Addon:
             pass
     
     def get_info(self) -> Dict:
-        """Возвращает информацию об аддоне"""
         return {
             'folder': self.folder,
             'name': self.config['name'],
@@ -117,10 +117,8 @@ class Addon:
         }
     
     def install_requirements(self) -> bool:
-        """Устанавливает зависимости аддона"""
         if not self.config.get('requirements'):
             return True
-        
         try:
             for req in self.config['requirements']:
                 if req:
@@ -135,11 +133,9 @@ class Addon:
             return False
     
     def start(self) -> Dict:
-        """Запускает аддон"""
         if self.running:
             return {'status': 'already_running', 'message': 'Аддон уже запущен'}
         
-        # Устанавливаем зависимости
         self.install_requirements()
         
         try:
@@ -153,22 +149,18 @@ class Addon:
             return {'status': 'error', 'message': str(e)}
     
     def _start_python(self) -> Dict:
-        """Запускает Python аддон"""
         main_file = os.path.join(self.path, self.config['main'])
         
         if not os.path.exists(main_file):
             return {'status': 'error', 'message': f'Файл {main_file} не найден'}
         
-        # Добавляем путь к аддону
         sys.path.insert(0, self.path)
         
         try:
-            # Импортируем модуль
             spec = importlib.util.spec_from_file_location('addon', main_file)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             
-            # Создаем экземпляр класса Addon
             if hasattr(module, 'Addon'):
                 self.instance = module.Addon()
                 if hasattr(self.instance, 'start'):
@@ -184,17 +176,13 @@ class Addon:
             return {'status': 'error', 'message': f'Ошибка запуска: {str(e)}'}
     
     def _start_bash(self) -> Dict:
-        """Запускает Bash аддон"""
         main_file = os.path.join(self.path, self.config['main'])
         
         if not os.path.exists(main_file):
             return {'status': 'error', 'message': f'Файл {main_file} не найден'}
         
         try:
-            # Делаем файл исполняемым
             os.chmod(main_file, 0o755)
-            
-            # Запускаем в фоне
             self.process = subprocess.Popen(
                 [main_file, 'start'],
                 stdout=subprocess.PIPE,
@@ -208,7 +196,6 @@ class Addon:
             return {'status': 'error', 'message': str(e)}
     
     def stop(self) -> Dict:
-        """Останавливает аддон"""
         if not self.running:
             return {'status': 'already_stopped', 'message': 'Аддон уже остановлен'}
         
@@ -232,7 +219,6 @@ class Addon:
             return {'status': 'error', 'message': str(e)}
     
     def status(self) -> Dict:
-        """Возвращает статус аддона"""
         try:
             if self.config['type'] == 'python' and self.instance and hasattr(self.instance, 'status'):
                 result = self.instance.status()
@@ -250,7 +236,6 @@ class Addon:
             return {'status': 'error', 'message': str(e)}
     
     def execute_command(self, command: str, args: list = None) -> Dict:
-        """Выполняет команду аддона"""
         if not self.running:
             return {'status': 'error', 'message': 'Аддон не запущен'}
         
@@ -264,8 +249,6 @@ class Addon:
             return {'status': 'error', 'message': str(e)}
 
 
-# ==================== МЕНЕДЖЕР АДДОНОВ ====================
-
 class AddonManager:
     """Управляет всеми аддонами"""
     
@@ -276,9 +259,15 @@ class AddonManager:
     def _load_all(self):
         """Загружает все аддоны из папки"""
         if not os.path.exists(ADDONS_DIR):
+            print(f"⚠️ Папка {ADDONS_DIR} не существует, создаю...")
+            os.makedirs(ADDONS_DIR, exist_ok=True)
             return
         
-        for folder in os.listdir(ADDONS_DIR):
+        print(f"📁 Сканируем папку: {ADDONS_DIR}")
+        folders = os.listdir(ADDONS_DIR)
+        print(f"📁 Найдено папок: {folders}")
+        
+        for folder in folders:
             folder_path = os.path.join(ADDONS_DIR, folder)
             if os.path.isdir(folder_path):
                 config_path = os.path.join(folder_path, "addon.conf")
@@ -286,30 +275,26 @@ class AddonManager:
                     try:
                         addon = Addon(folder)
                         self.addons[folder] = addon
-                        print(f"✅ Загружен аддон: {addon.config['name']}")
                     except Exception as e:
                         print(f"❌ Ошибка загрузки аддона {folder}: {e}")
+                else:
+                    print(f"⚠️ В папке {folder} нет addon.conf")
     
     def get_addon(self, folder: str) -> Optional[Addon]:
-        """Возвращает аддон по имени папки"""
         return self.addons.get(folder)
     
     def get_all_addons(self) -> List[Dict]:
-        """Возвращает список всех аддонов"""
         return [addon.get_info() for addon in self.addons.values()]
     
     def get_addons_by_startup(self) -> List[Addon]:
-        """Возвращает аддоны с startup=yes"""
         return [a for a in self.addons.values() if a.config.get('startup') == 'yes']
     
     def start_all_startup(self):
-        """Запускает все аддоны с startup=yes"""
         for addon in self.get_addons_by_startup():
             if not addon.running:
                 result = addon.start()
                 print(f"🔄 Запуск {addon.config['name']}: {result}")
     
     def reload(self):
-        """Перезагружает все аддоны"""
         self.addons.clear()
         self._load_all()
