@@ -1,4 +1,4 @@
-name: VPS via Central Bot (No Tailscale)
+name: 🚀 Автоматический VPS
 
 on:
   workflow_dispatch:
@@ -13,68 +13,95 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Generate access code
+      # ============================================
+      # 1. УСТАНАВЛИВАЕМ ЗАВИСИМОСТИ
+      # ============================================
+      - name: Устанавливаем Python и зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip
+          pip3 install -r bot/requirements.txt
+      
+      # ============================================
+      # 2. ГЕНЕРИРУЕМ КОД И ПАРОЛЬ
+      # ============================================
+      - name: Генерируем код доступа
         id: generate
         run: |
-          # Генерируем код
           ACCESS_CODE=$(openssl rand -hex 4 | tr 'a-f' 'A-F')
           SSH_PASSWORD=$(openssl rand -base64 15 | tr -d '/+=')
           
           echo "ACCESS_CODE=$ACCESS_CODE" >> $GITHUB_ENV
           echo "SSH_PASSWORD=$SSH_PASSWORD" >> $GITHUB_ENV
           
-          # Устанавливаем пароль
           echo "runner:$SSH_PASSWORD" | sudo chpasswd
           
           echo "✅ Код сгенерирован: $ACCESS_CODE"
       
-      - name: Get IP address
+      # ============================================
+      # 3. ПОЛУЧАЕМ IP АДРЕС
+      # ============================================
+      - name: Получаем IP адрес
         id: ip
         run: |
-          # Получаем публичный IP
           IP=$(curl -s ifconfig.me)
-          echo "IP=$IP" >> $GITHUB_ENV
-          echo "Публичный IP: $IP"
+          echo "SERVER_IP=$IP" >> $GITHUB_ENV
+          echo "🌐 Публичный IP: $IP"
       
-      - name: Register code (опционально)
-        env:
-          API_URL: ${{ secrets.CENTRAL_BOT_API_URL }}
+      # ============================================
+      # 4. РЕГИСТРИРУЕМ КОД В БОТЕ
+      # ============================================
+      - name: Регистрируем код в боте
         run: |
-          if [ -z "$API_URL" ]; then
-            echo "⚠️ API_URL не задан. Код НЕ зарегистрирован автоматически."
-            echo "⚠️ Отправьте код боту вручную!"
-          else
-            # Регистрируем код в центральном боте
-            RESPONSE=$(curl -s -X POST "$API_URL/register" \
-              -H "Content-Type: application/json" \
-              -d '{"code":"'"$ACCESS_CODE"'","ip":"'"$IP"'","password":"'"$SSH_PASSWORD"'"}')
-            
-            if echo "$RESPONSE" | grep -q "success"; then
-              echo "✅ Код зарегистрирован в боте"
-            else
-              echo "⚠️ Ошибка регистрации: $RESPONSE"
-            fi
-          fi
+          python3 bot/central_bot.py \
+            --token "${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+            --add-code "$ACCESS_CODE:$SERVER_IP:$SSH_PASSWORD"
+          
+          echo "✅ Код зарегистрирован в боте"
       
-      - name: Show connection info
+      # ============================================
+      # 5. ЗАПУСКАЕМ БОТА В ФОНЕ
+      # ============================================
+      - name: Запускаем Telegram бота
+        run: |
+          python3 bot/central_bot.py \
+            --token "${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+            --admin-id "${{ secrets.ADMIN_CHAT_ID }}" &
+          
+          sleep 3
+          echo "✅ Бот запущен"
+      
+      # ============================================
+      # 6. ПОКАЗЫВАЕМ ИНФОРМАЦИЮ
+      # ============================================
+      - name: Информация для пользователя
         run: |
           echo "=================================================="
-          echo "          ✅ VPS IS READY ✅"
+          echo "          ✅ VPS ГОТОВ К РАБОТЕ ✅"
           echo "=================================================="
           echo ""
-          echo "  🔑 ACCESS CODE: $ACCESS_CODE"
-          echo "  🌐 IP ADDRESS:  $IP"
-          echo "  👤 USER:        runner"
-          echo "  🔑 PASSWORD:    $SSH_PASSWORD"
+          echo "  🤖 БОТ: @${{ secrets.BOT_USERNAME }}"
+          echo "  🔑 КОД: $ACCESS_CODE"
+          echo "  🌐 IP:   $SERVER_IP"
+          echo "  👤 ПОЛЬЗОВАТЕЛЬ: runner"
+          echo "  🔑 ПАРОЛЬ: $SSH_PASSWORD"
           echo ""
           echo "=================================================="
-          echo "  📱 BOT: @YourBotName"
-          echo "  📝 Send code: $ACCESS_CODE"
+          echo "  📱 ИНСТРУКЦИЯ:"
+          echo "  1. Открой Telegram"
+          echo "  2. Найди @${{ secrets.BOT_USERNAME }}"
+          echo "  3. Отправь код: $ACCESS_CODE"
+          echo "  4. Получи SSH доступ!"
+          echo ""
+          echo "  🔹 SSH: ssh runner@$SERVER_IP"
           echo "=================================================="
           echo ""
-          echo "  🔹 SSH COMMAND:"
-          echo "  ssh runner@$IP"
+          echo "  ⏱️ Сервер активен ~6 часов"
+          echo "  🔄 Авто-перезапуск каждые 6 часов"
           echo "=================================================="
       
+      # ============================================
+      # 7. ДЕРЖИМ СЕРВЕР ЖИВЫМ
+      # ============================================
       - name: Keep alive
         run: sleep 21000
