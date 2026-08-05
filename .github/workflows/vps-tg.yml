@@ -1,4 +1,4 @@
-name: VPS via Central Bot
+name: VPS via Central Bot (No Tailscale)
 
 on:
   workflow_dispatch:
@@ -13,18 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install Tailscale
-        run: curl -fsSL https://tailscale.com/install.sh | sh
-      
-      - name: Connect to Tailscale
-        run: |
-          sudo tailscaled &
-          sleep 8
-          sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTHKEY }} --hostname=github-vps
-      
-      - name: Generate and register code
-        env:
-          API_URL: ${{ secrets.CENTRAL_BOT_API_URL }}
+      - name: Generate access code
+        id: generate
         run: |
           # Генерируем код
           ACCESS_CODE=$(openssl rand -hex 4 | tr 'a-f' 'A-F')
@@ -36,28 +26,54 @@ jobs:
           # Устанавливаем пароль
           echo "runner:$SSH_PASSWORD" | sudo chpasswd
           
-          # Регистрируем в центральном боте
-          IP=$(tailscale ip -4)
-          
-          curl -X POST "$API_URL/register" \
-            -H "Content-Type: application/json" \
-            -d '{"code":"'"$ACCESS_CODE"'","ip":"'"$IP"'","password":"'"$SSH_PASSWORD"'"}'
-          
-          echo ""
-          echo "✅ Код зарегистрирован: $ACCESS_CODE"
+          echo "✅ Код сгенерирован: $ACCESS_CODE"
       
-      - name: Show info
+      - name: Get IP address
+        id: ip
+        run: |
+          # Получаем публичный IP
+          IP=$(curl -s ifconfig.me)
+          echo "IP=$IP" >> $GITHUB_ENV
+          echo "Публичный IP: $IP"
+      
+      - name: Register code (опционально)
+        env:
+          API_URL: ${{ secrets.CENTRAL_BOT_API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "⚠️ API_URL не задан. Код НЕ зарегистрирован автоматически."
+            echo "⚠️ Отправьте код боту вручную!"
+          else
+            # Регистрируем код в центральном боте
+            RESPONSE=$(curl -s -X POST "$API_URL/register" \
+              -H "Content-Type: application/json" \
+              -d '{"code":"'"$ACCESS_CODE"'","ip":"'"$IP"'","password":"'"$SSH_PASSWORD"'"}')
+            
+            if echo "$RESPONSE" | grep -q "success"; then
+              echo "✅ Код зарегистрирован в боте"
+            else
+              echo "⚠️ Ошибка регистрации: $RESPONSE"
+            fi
+          fi
+      
+      - name: Show connection info
         run: |
           echo "=================================================="
           echo "          ✅ VPS IS READY ✅"
           echo "=================================================="
           echo ""
-          echo "  🤖 BOT: @${{ secrets.CENTRAL_BOT_USERNAME }}"
-          echo "  🔑 CODE: $ACCESS_CODE"
-          echo "  🌐 IP:   $(tailscale ip -4)"
+          echo "  🔑 ACCESS CODE: $ACCESS_CODE"
+          echo "  🌐 IP ADDRESS:  $IP"
+          echo "  👤 USER:        runner"
+          echo "  🔑 PASSWORD:    $SSH_PASSWORD"
           echo ""
           echo "=================================================="
-          echo "  📱 Send this code to the bot: $ACCESS_CODE"
+          echo "  📱 BOT: @YourBotName"
+          echo "  📝 Send code: $ACCESS_CODE"
+          echo "=================================================="
+          echo ""
+          echo "  🔹 SSH COMMAND:"
+          echo "  ssh runner@$IP"
           echo "=================================================="
       
       - name: Keep alive
