@@ -1,4 +1,4 @@
-name: 🚀 Автоматический VPS
+name: VPS Через TG бота
 
 on:
   workflow_dispatch:
