@@ -1,9 +1,3 @@
-
----
-
-## 3️⃣ `bot/central_bot.py` (ОБНОВЛЕННЫЙ С АДДОНАМИ)
-
-```python
 #!/usr/bin/env python3
 """
 УМНЫЙ БОТ для управления VPS с поддержкой аддонов
@@ -23,17 +17,17 @@ from threading import Lock
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# ==================== ИМПОРТ АДДОНОВ ====================
-from addon_loader import AddonManager, Addon
+# ИМПОРТ ЗАГРУЗЧИКА АДДОНОВ
+from addon_loader import AddonManager
 
-# ==================== НАСТРОЙКА ====================
+# НАСТРОЙКА
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ==================== ПУТИ ====================
+# ПУТИ
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAVES_DIR = os.path.join(BASE_DIR, "Saves")
 USER_DIR = os.path.join(SAVES_DIR, "user")
@@ -42,11 +36,11 @@ SESSION_FILE = os.path.join(SAVES_DIR, "sessions.json")
 os.makedirs(USER_DIR, exist_ok=True)
 os.makedirs(SAVES_DIR, exist_ok=True)
 
-# ==================== КОНФИГ ====================
+# КОНФИГ
 CODE_EXPIRE_MINUTES = 10
 CLEANUP_INTERVAL = 300
 
-# ==================== ЗАГРУЗКА АДДОНОВ ====================
+# ЗАГРУЗКА АДДОНОВ
 addon_manager = AddonManager()
 
 # ==================== GIT ФУНКЦИИ ====================
@@ -69,7 +63,7 @@ def git_commit_and_push(file_path: str) -> bool:
         subprocess.run(['git', 'push'], capture_output=True, check=False)
         return True
     except Exception as e:
-        logger.error(f"❌ Ошибка git: {e}")
+        logger.error(f"Ошибка git: {e}")
         return False
 
 # ==================== РАБОТА С ФАЙЛАМИ ====================
@@ -82,10 +76,10 @@ def save_user_data(user_id: int, data: Dict) -> None:
         file_path = get_user_file(user_id)
         with open(file_path, 'w') as f:
             json.dump(data, f, indent=2)
-        logger.info(f"✅ Сохранен пользователь {user_id}")
+        logger.info(f"Сохранен пользователь {user_id}")
         git_commit_and_push(file_path)
     except Exception as e:
-        logger.error(f"❌ Ошибка сохранения: {e}")
+        logger.error(f"Ошибка сохранения: {e}")
 
 def load_user_data(user_id: int) -> Optional[Dict]:
     try:
@@ -94,7 +88,7 @@ def load_user_data(user_id: int) -> Optional[Dict]:
             with open(file_path, 'r') as f:
                 return json.load(f)
     except Exception as e:
-        logger.error(f"❌ Ошибка загрузки: {e}")
+        logger.error(f"Ошибка загрузки: {e}")
     return None
 
 def delete_user_data(user_id: int) -> bool:
@@ -102,14 +96,14 @@ def delete_user_data(user_id: int) -> bool:
         file_path = get_user_file(user_id)
         if os.path.exists(file_path):
             os.remove(file_path)
-            logger.info(f"🗑️ Удален пользователь {user_id}")
+            logger.info(f"Удален пользователь {user_id}")
             subprocess.run(['git', 'add', file_path], capture_output=True, check=False)
             subprocess.run(['git', 'commit', '-m', f'Удалить пользователя {user_id}'], 
                           capture_output=True, check=False)
             subprocess.run(['git', 'push'], capture_output=True, check=False)
             return True
     except Exception as e:
-        logger.error(f"❌ Ошибка удаления: {e}")
+        logger.error(f"Ошибка удаления: {e}")
     return False
 
 def get_all_users() -> List[int]:
@@ -123,7 +117,7 @@ def get_all_users() -> List[int]:
                 except:
                     pass
     except Exception as e:
-        logger.error(f"❌ Ошибка списка пользователей: {e}")
+        logger.error(f"Ошибка списка пользователей: {e}")
     return users
 
 def get_user_stats() -> Dict:
@@ -168,7 +162,7 @@ class SessionManager:
                             self.users[user_id] = code
                             self.trusted.add(user_id)
                             self.sessions[code]['user_id'] = user_id
-                            logger.info(f"♻️ Восстановлен пользователь {user_id}")
+                            logger.info(f"Восстановлен пользователь {user_id}")
             
             self._save()
         except Exception as e:
@@ -192,7 +186,7 @@ class SessionManager:
                 'created': datetime.now().isoformat(), 'expires': expires
             }
             self._save()
-            logger.info(f"✅ Код зарегистрирован: {code}")
+            logger.info(f"Код зарегистрирован: {code}")
             return True
     
     def activate(self, code: str, user_id: int) -> Optional[Dict]:
@@ -482,8 +476,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"▶️ Аддонов запущено: {running_addons}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"💾 Сохранено в: Saves/user/\n"
-        f"🔄 Git: ✅ активен\n"
-        f"🔥 Стриминг: ✅ включен\n"
+        f"🔄 Git: активен\n"
+        f"🔥 Стриминг: включен\n"
     )
     
     if session:
@@ -499,7 +493,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("⛔ Отправьте код для доступа", parse_mode='HTML')
         return
     
-    # Пытаемся получить IP через аддон
     try:
         from addons.ip_checker.main import get_ip
         public_ip = get_ip()
@@ -561,6 +554,13 @@ async def myserver(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"SSH: <code>ssh runner@{session['ip']}</code>",
         parse_mode='HTML'
     )
+
+async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_chat.id
+    if manager.revoke(user_id):
+        await update.message.reply_text("✅ Доступ отозван", parse_mode='HTML')
+    else:
+        await update.message.reply_text("ℹ️ Нет активного доступа", parse_mode='HTML')
 
 # ==================== АДДОНЫ ====================
 
@@ -697,7 +697,6 @@ async def addon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await addons_command(update, context)
         return
     
-    # Парсим: addon_start_ip_checker
     parts = data.split('_')
     if len(parts) < 3:
         return
@@ -762,7 +761,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     username = update.effective_user.username or "без username"
     text = update.message.text.strip()
     
-    # Проверяем код доступа
     text_upper = text.upper()
     if len(text_upper) == 8 and text_upper.isalnum():
         if manager.is_trusted(user_id):
@@ -786,10 +784,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"🔥 Все команды показывают прогресс в реальном времени!",
                 parse_mode='HTML'
             )
-            logger.info(f"✅ АКТИВИРОВАН: @{username} (ID: {user_id}) код {text_upper}")
+            logger.info(f"АКТИВИРОВАН: @{username} (ID: {user_id}) код {text_upper}")
         return
     
-    # Выполняем команду
     if manager.is_trusted(user_id):
         if text.startswith('/'):
             return
@@ -799,14 +796,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             user_data['last_activity'] = datetime.now().isoformat()
             save_user_data(user_id, user_data)
         
-        # Проверяем, не является ли это командой аддона
-        for addon in addon_manager.get_all_addons():
-            if addon.get('running'):
-                # Если аддон запущен, можно выполнить его команды
-                # TODO: добавить обработку команд аддонов
-                pass
-        
-        # Выполняем команду через стриминг
         await execute_command_streaming(text, update, context)
 
 # ==================== ОЧИСТКА ====================
@@ -828,24 +817,22 @@ def main():
         if len(parts) == 3:
             code, ip, password = parts
             if manager.add_code(code, ip, password):
-                print(f"✅ Код {code} добавлен!")
+                print(f"Код {code} добавлен!")
                 return 0
             else:
-                print(f"❌ Код {code} уже существует!")
+                print(f"Код {code} уже существует!")
                 return 1
         else:
-            print("❌ Формат: code:ip:password")
+            print("Формат: code:ip:password")
             return 1
     
     if args.admin_id:
         os.environ['ADMIN_CHAT_ID'] = args.admin_id
     
-    # Запускаем аддоны с startup=yes
     addon_manager.start_all_startup()
     
     app = Application.builder().token(args.token).build()
     
-    # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status_command))
@@ -855,23 +842,19 @@ def main():
     app.add_handler(CommandHandler("addons", addons_command))
     app.add_handler(CommandHandler("addon", addon_command))
     
-    # Callback
     app.add_handler(CallbackQueryHandler(addon_callback, pattern="^addon_"))
     app.add_handler(CallbackQueryHandler(addon_callback, pattern="^addons_"))
     
-    # Обработчик сообщений
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Очистка
     job_queue = app.job_queue
     if job_queue:
         job_queue.run_repeating(cleanup_task, interval=CLEANUP_INTERVAL, first=10)
     
-    logger.info("🤖 УМНЫЙ БОТ ЗАПУЩЕН!")
-    logger.info(f"📁 Пользователи сохраняются в: {USER_DIR}")
-    logger.info(f"📦 Аддонов загружено: {len(addon_manager.get_all_addons())}")
-    logger.info("🔥 Стриминг ВСЕГДА ВКЛЮЧЕН (stdout + stderr)")
-    logger.info("📝 Просто пиши команды в чат - всё через стриминг!")
+    logger.info("БОТ ЗАПУЩЕН!")
+    logger.info(f"Пользователи сохраняются в: {USER_DIR}")
+    logger.info(f"Аддонов загружено: {len(addon_manager.get_all_addons())}")
+    logger.info("Просто пиши команды в чат - всё через стриминг!")
     app.run_polling()
 
 if __name__ == '__main__':
