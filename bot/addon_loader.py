@@ -11,7 +11,6 @@ import subprocess
 import sys
 from typing import Dict, List, Optional, Any
 
-# КОНФИГ
 ADDONS_DIR = os.path.join(os.path.dirname(__file__), "addons")
 ADDONS_DATA = os.path.join(os.path.dirname(os.path.dirname(__file__)), "Saves", "addons")
 
@@ -22,8 +21,6 @@ print(f"📁 Папка аддонов: {ADDONS_DIR}")
 
 
 class Addon:
-    """Класс для управления аддоном"""
-    
     def __init__(self, folder: str):
         self.folder = folder
         self.path = os.path.join(ADDONS_DIR, folder)
@@ -38,7 +35,6 @@ class Addon:
         print(f"✅ Загружен аддон: {self.config.get('name', folder)}")
     
     def _load_config(self) -> Dict:
-        """Загружает конфиг аддона"""
         config_path = os.path.join(self.path, "addon.conf")
         config = {
             'name': self.folder,
@@ -82,8 +78,6 @@ class Addon:
                                 config['commands'] = [c.strip() for c in value.split(',') if c.strip()]
             except Exception as e:
                 print(f"⚠️ Ошибка загрузки конфига {self.folder}: {e}")
-        else:
-            print(f"⚠️ Конфиг не найден: {config_path}")
         
         return config
     
@@ -250,14 +244,11 @@ class Addon:
 
 
 class AddonManager:
-    """Управляет всеми аддонами"""
-    
     def __init__(self):
         self.addons: Dict[str, Addon] = {}
         self._load_all()
     
     def _load_all(self):
-        """Загружает все аддоны из папки"""
         if not os.path.exists(ADDONS_DIR):
             print(f"⚠️ Папка {ADDONS_DIR} не существует, создаю...")
             os.makedirs(ADDONS_DIR, exist_ok=True)
