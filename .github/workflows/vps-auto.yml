@@ -20,7 +20,7 @@ jobs:
       - name: Восстанавливаем пользователей
         run: |
           if [ -d "Saves/user" ]; then
-            echo "✅ Пользователи загружены:"
+            echo "✅ Пользователи загружены из репозитория:"
             ls -la Saves/user/
           else
             echo "ℹ️ Нет сохраненных пользователей"
@@ -90,9 +90,10 @@ jobs:
           echo ""
           echo "  💾 ПОЛЬЗОВАТЕЛИ СОХРАНЯЮТСЯ В РЕПОЗИТОРИЙ!"
           echo "  🔄 При перезапуске доступ восстанавливается!"
+          echo "  ⏱️ Сервер активен ~6 часов"
           echo "=================================================="
       
-      - name: Сохраняем изменения
+      - name: Сохраняем изменения в репозиторий
         run: |
           git config --global user.email "vps-bot@github.com"
           git config --global user.name "VPS Bot"
@@ -100,41 +101,12 @@ jobs:
           git add Saves/
           
           if git diff --staged --quiet; then
-            echo "ℹ️ Нет изменений"
+            echo "ℹ️ Нет изменений для сохранения"
           else
             git commit -m "Сохранить данные пользователей [skip ci]"
             git push
-            echo "✅ Изменения сохранены"
+            echo "✅ Изменения сохранены в репозиторий"
           fi
-      
-      # ============================================================
-      # ⭐ ПЕРЕЗАПУСК ПЕРЕД ВЫКЛЮЧЕНИЕМ
-      # ============================================================
-      - name: 🔄 Запускаем новый workflow перед выключением
-        run: |
-          echo "=================================================="
-          echo "  🔄 ЗАПУСК НОВОГО WORKFLOW"
-          echo "=================================================="
-          
-          # Ждем 1 минуту (запас)
-          echo "⏳ Ожидание 60 секунд..."
-          sleep 60
-          
-          # Запускаем keepalive workflow через GitHub API
-          echo "🚀 Запуск VPS Keep Alive..."
-          
-          curl -X POST \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/actions/workflows/vps-keepalive.yml/dispatches \
-            -d '{"ref":"main"}'
-          
-          echo "✅ Новый workflow запущен!"
-          echo "⏳ Ожидание 30 секунд для запуска..."
-          sleep 30
-          
-          echo "✅ Передача управления завершена"
-          echo "=================================================="
       
       - name: Keep alive
         run: sleep 21000
