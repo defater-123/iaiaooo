@@ -1,0 +1,108 @@
+name: 🔄 VPS Keep Alive
+
+on:
+  workflow_dispatch:  # Только ручной запуск от основного workflow
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    
+    steps:
+      - name: Ожидание 20 секунд (подстраховка)
+        run: |
+          echo "⏳ Ожидание 20 секунд..."
+          sleep 20
+          echo "✅ Продолжаем работу"
+      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Восстанавливаем пользователей
+        run: |
+          if [ -d "Saves/user" ]; then
+            echo "✅ Пользователи загружены:"
+            ls -la Saves/user/
+          else
+            echo "ℹ️ Нет сохраненных пользователей"
+            mkdir -p Saves/user
+          fi
+      
+      - name: Устанавливаем Python
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip
+          pip3 install -r bot/requirements.txt
+      
+      - name: Генерируем новый код доступа
+        id: generate
+        run: |
+          ACCESS_CODE=$(openssl rand -hex 4 | tr 'a-f' 'A-F')
+          SSH_PASSWORD=$(openssl rand -base64 15 | tr -d '/+=')
+          
+          echo "ACCESS_CODE=$ACCESS_CODE" >> $GITHUB_ENV
+          echo "SSH_PASSWORD=$SSH_PASSWORD" >> $GITHUB_ENV
+          
+          echo "runner:$SSH_PASSWORD" | sudo chpasswd
+          
+          echo "✅ Новый код сгенерирован: $ACCESS_CODE"
+      
+      - name: Получаем IP адрес
+        id: ip
+        run: |
+          IP=$(curl -s ifconfig.me)
+          echo "SERVER_IP=$IP" >> $GITHUB_ENV
+          echo "🌐 Публичный IP: $IP"
+      
+      - name: Регистрируем новый код в боте
+        run: |
+          python3 bot/central_bot.py \
+            --token "${{ secrets.TELEGRAM_BOT_TOKEN }}" \
+            --add-code "$ACCESS_CODE:$SERVER_IP:$SSH_PASSWORD"
+          
+          echo "✅ Новый код зарегистрирован: $ACCESS_CODE"
+      
+      - name: Запускаем Telegram бота
+        run: |
+          python3 bot/central_bot.py \
+            --token "${{ secrets.TELEGRAM_BOT_TOKEN }}" &
+          
+          sleep 3
+          echo "✅ Бот перезапущен"
+      
+      - name: Информация для пользователя
+        run: |
+          echo "=================================================="
+          echo "          🔄 СЕРВЕР ПЕРЕЗАПУЩЕН 🔄"
+          echo "=================================================="
+          echo ""
+          echo "  🤖 БОТ: @${{ secrets.BOT_USERNAME }}"
+          echo "  🔑 НОВЫЙ КОД: $ACCESS_CODE"
+          echo "  🌐 IP: $SERVER_IP"
+          echo ""
+          echo "=================================================="
+          echo "  ⚠️ ВАЖНО:"
+          echo "  Старый код больше не работает!"
+          echo "  Используйте новый код: $ACCESS_CODE"
+          echo "=================================================="
+      
+      - name: Сохраняем изменения
+        run: |
+          git config --global user.email "vps-bot@github.com"
+          git config --global user.name "VPS Bot"
+          
+          git add Saves/
+          
+          if git diff --staged --quiet; then
+            echo "ℹ️ Нет изменений"
+          else
+            git commit -m "Сохранить данные пользователей [skip ci]"
+            git push
+            echo "✅ Изменения сохранены"
+          fi
+      
+      - name: Keep alive
+        run: sleep 21000
