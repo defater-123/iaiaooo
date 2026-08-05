@@ -1,0 +1,10 @@
+{
+  "user_id": 5609224868,
+  "code": "9BA15B65",
+  "ip": "52.176.124.227",
+  "password": "CxpLRYKt7HZuhqt5sGFW",
+  "active": true,
+  "activated_at": "2026-08-05T01:05:12.314422",
+  "expires": "2026-08-05T01:13:06.212277",
+  "last_activity": "2026-08-05T01:05:12.314631"
+}
