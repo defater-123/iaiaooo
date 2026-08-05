@@ -492,7 +492,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     
     try:
-        from addons.ip_checker.main import get_ip
+        from bot.addons.ip_checker.main import get_ip
         public_ip = get_ip()
     except:
         public_ip = "Не удалось получить (аддон не загружен)"
