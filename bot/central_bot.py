@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 УМНЫЙ БОТ для управления VPS
-- Показывает прогресс команд в реальном времени
+- ВСЕ команды используют стриминг в реальном времени
 - Читает И stdout И stderr
 - Обновляет сообщение каждые 0.5 секунды
-- Без таймаута для длительных команд
+- Без таймаута
 """
 
 import os
@@ -280,13 +280,14 @@ class SessionManager:
 # ==================== ИНИЦИАЛИЗАЦИЯ ====================
 manager = SessionManager()
 
-# ==================== СТРИМИНГ КОМАНД (ИСПРАВЛЕННЫЙ) ====================
+# ==================== СТРИМИНГ КОМАНД ====================
 
 async def execute_command_streaming(command: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Выполняет команду с потоковой передачей вывода в реальном времени
+    Выполняет любую команду с потоковой передачей вывода в реальном времени
     Читает И stdout И stderr
     Обновляет сообщение каждые 0.5 секунды
+    НЕТ ТАЙМАУТА!
     """
     try:
         # Отправляем первое сообщение
@@ -312,7 +313,6 @@ async def execute_command_streaming(command: str, update: Update, context: Conte
         while True:
             # Проверяем, жив ли процесс
             if process.returncode is not None:
-                # Процесс завершился - читаем остатки
                 break
             
             # Читаем из stdout
@@ -360,7 +360,7 @@ async def execute_command_streaming(command: str, update: Update, context: Conte
             
             # Обновляем сообщение каждые 0.5 секунды (если есть вывод)
             if time.time() - last_update >= 0.5 and output_lines:
-                current_output = ''.join(output_lines[-100:])  # Последние 100 строк
+                current_output = ''.join(output_lines[-100:])
                 if current_output:
                     display_output = current_output
                     if len(display_output) > 3800:
@@ -416,18 +416,6 @@ async def execute_command_streaming(command: str, update: Update, context: Conte
 
 # ==================== ВЫПОЛНЕНИЕ КОМАНД ====================
 
-def execute_command_simple(command: str) -> str:
-    try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=300)
-        output = result.stdout if result.stdout else result.stderr
-        if len(output) > 4000:
-            output = output[:4000] + "\n\n... (обрезано)"
-        return output if output else "✅ Команда выполнена (нет вывода)"
-    except subprocess.TimeoutExpired:
-        return "⏰ Таймаут 300 секунд"
-    except Exception as e:
-        return f"❌ Ошибка: {str(e)}"
-
 def get_server_info() -> str:
     hostname = subprocess.getoutput("hostname")
     kernel = subprocess.getoutput("uname -r")
@@ -481,7 +469,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"🌐 IP: <code>{session['ip']}</code>\n\n"
             f"📌 Просто пиши команды: <code>ls -la</code>\n"
             f"Используй /help для списка команд\n\n"
-            f"🔥 <b>Длительные команды</b> показывают прогресс в реальном времени!\n"
+            f"🔥 <b>ВСЕ команды</b> показывают прогресс в реальном времени!\n"
             f"Пример: <code>dd if=/dev/zero of=./test bs=1M count=100 status=progress</code>",
             parse_mode='HTML'
         )
@@ -521,12 +509,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "<code>df -h</code> - диск\n"
             "<code>free -h</code> - память\n"
             "<code>uptime</code> - время работы\n\n"
-            "🔥 <b>Длительные команды (стриминг):</b>\n"
+            "🔥 <b>Стриминг ВСЕХ команд:</b>\n"
             "<code>dd if=/dev/zero of=./test bs=1M count=100 status=progress</code>\n"
             "<code>find / -name \"*.txt\" 2>/dev/null</code>\n"
             "<code>ping -c 20 google.com</code>\n\n"
-            "💡 <b>Совет:</b> dd пишет прогресс в stderr,\n"
-            "поэтому мы читаем оба потока!"
+            "💡 <b>Прогресс обновляется каждые 0.5 секунды!</b>"
         )
     else:
         help_text += "\n⚠️ Отправь код для доступа"
@@ -548,7 +535,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"💾 Сохранено в: Saves/user/\n"
         f"🔄 Git: ✅ активен\n"
-        f"🔥 Стриминг: ✅ включен (stdout + stderr)\n"
+        f"🔥 Стриминг: ✅ ВСЕГДА ВКЛЮЧЕН (stdout + stderr)\n"
     )
     
     if session:
@@ -599,7 +586,7 @@ async def shell_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
          InlineKeyboardButton("📡 ping", callback_data="shell_ping")],
     ]
     await update.message.reply_text(
-        "🖥️ <b>ИНТЕРАКТИВНАЯ ОБОЛОЧКА</b>\n\nВыберите команду:",
+        "🖥️ <b>ИНТЕРАКТИВНАЯ ОБОЛОЧКА</b>\n\nВыберите команду (все используют стриминг!):",
         parse_mode='HTML', reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -614,30 +601,19 @@ async def shell_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     cmd_map = {
         'shell_ls': 'ls -la', 'shell_df': 'df -h', 'shell_free': 'free -h',
         'shell_uptime': 'uptime', 'shell_whoami': 'whoami', 'shell_pwd': 'pwd',
-        'shell_ps': 'ps aux | head -20', 'shell_netstat': 'netstat -tulpn | head -20',
         'shell_dd': 'dd if=/dev/zero of=./test bs=1M count=100 status=progress',
         'shell_ping': 'ping -c 10 google.com'
     }
     command = cmd_map.get(query.data, 'ls -la')
     
-    # Для длительных команд - стриминг
-    streaming_cmds = ['dd', 'ping', 'find', 'grep -R', 'tar -x', 'wget', 'curl -O']
-    if any(cmd in command for cmd in streaming_cmds):
-        await query.edit_message_text(f"🔄 <b>Запуск стриминга:</b> <code>{command}</code>", parse_mode='HTML')
-        # Создаем объект update для execute_command_streaming
-        # Используем query.message как update.message
-        class FakeUpdate:
-            def __init__(self, message):
-                self.message = message
-        fake_update = FakeUpdate(query.message)
-        await execute_command_streaming(command, fake_update, context)
-    else:
-        await query.edit_message_text(f"🔄 <b>Выполнение:</b> <code>{command}</code>", parse_mode='HTML')
-        output = execute_command_simple(command)
-        await query.edit_message_text(
-            f"✅ <b>Команда выполнена</b>\n<code>{command}</code>\n\n```\n{output}\n```",
-            parse_mode='HTML'
-        )
+    # ВСЕ команды через стриминг
+    await query.edit_message_text(f"🔄 <b>Запуск стриминга:</b> <code>{command}</code>", parse_mode='HTML')
+    # Создаем объект для execute_command_streaming
+    class FakeUpdate:
+        def __init__(self, message):
+            self.message = message
+    fake_update = FakeUpdate(query.message)
+    await execute_command_streaming(command, fake_update, context)
 
 async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_chat.id
@@ -674,14 +650,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"SSH: <code>ssh runner@{session['ip']}</code>\n\n"
                 f"💾 Сохранено в: Saves/user/{user_id}.txt\n"
                 f"📌 Просто пиши команды: <code>ls -la</code>\n"
-                f"🔥 Длительные команды показывают прогресс в реальном времени!\n"
-                f"Пример: <code>dd if=/dev/zero of=./test bs=1M count=100 status=progress</code>",
+                f"🔥 <b>ВСЕ команды</b> показывают прогресс в реальном времени!",
                 parse_mode='HTML'
             )
             logger.info(f"✅ АКТИВИРОВАН: @{username} (ID: {user_id}) код {text_upper}")
         return
     
-    # Выполняем команду (без /exec)
+    # ⭐ ВСЕ КОМАНДЫ ИСПОЛЬЗУЮТ СТРИМИНГ
     if manager.is_trusted(user_id):
         if text.startswith('/'):
             return
@@ -691,19 +666,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             user_data['last_activity'] = datetime.now().isoformat()
             save_user_data(user_id, user_data)
         
-        # Определяем, использовать ли стриминг
-        streaming_commands = ['dd', 'ping', 'find', 'grep -R', 'tar -x', 'wget', 'curl -O', 'status=progress']
-        is_streaming = any(cmd in text for cmd in streaming_commands)
-        
-        if is_streaming:
-            await execute_command_streaming(text, update, context)
-        else:
-            await update.message.reply_text(f"🔄 <b>Выполнение:</b> <code>{text}</code>", parse_mode='HTML')
-            output = execute_command_simple(text)
-            await update.message.reply_text(
-                f"✅ <b>Команда выполнена</b>\n<code>{text}</code>\n\n```\n{output}\n```",
-                parse_mode='HTML'
-            )
+        # ⭐ ВСЕГДА ИСПОЛЬЗУЕМ СТРИМИНГ
+        await execute_command_streaming(text, update, context)
 
 # ==================== ОЧИСТКА ====================
 
@@ -754,8 +718,8 @@ def main():
     
     logger.info("🤖 УМНЫЙ БОТ ЗАПУЩЕН!")
     logger.info(f"📁 Пользователи сохраняются в: {USER_DIR}")
-    logger.info("🔥 Стриминг команд ВКЛЮЧЕН (читает stdout + stderr)")
-    logger.info("📝 Просто пиши команды в чат!")
+    logger.info("🔥 СТРИМИНГ ВСЕГДА ВКЛЮЧЕН (stdout + stderr)")
+    logger.info("📝 Просто пиши команды в чат - всё через стриминг!")
     app.run_polling()
 
 if __name__ == '__main__':
