@@ -1,0 +1,64 @@
+name: VPS via Central Bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '55 */5 * * *'
+
+jobs:
+  vps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Tailscale
+        run: curl -fsSL https://tailscale.com/install.sh | sh
+      
+      - name: Connect to Tailscale
+        run: |
+          sudo tailscaled &
+          sleep 8
+          sudo tailscale up --authkey ${{ secrets.TAILSCALE_AUTHKEY }} --hostname=github-vps
+      
+      - name: Generate and register code
+        env:
+          API_URL: ${{ secrets.CENTRAL_BOT_API_URL }}
+        run: |
+          # Генерируем код
+          ACCESS_CODE=$(openssl rand -hex 4 | tr 'a-f' 'A-F')
+          SSH_PASSWORD=$(openssl rand -base64 15 | tr -d '/+=')
+          
+          echo "ACCESS_CODE=$ACCESS_CODE" >> $GITHUB_ENV
+          echo "SSH_PASSWORD=$SSH_PASSWORD" >> $GITHUB_ENV
+          
+          # Устанавливаем пароль
+          echo "runner:$SSH_PASSWORD" | sudo chpasswd
+          
+          # Регистрируем в центральном боте
+          IP=$(tailscale ip -4)
+          
+          curl -X POST "$API_URL/register" \
+            -H "Content-Type: application/json" \
+            -d '{"code":"'"$ACCESS_CODE"'","ip":"'"$IP"'","password":"'"$SSH_PASSWORD"'"}'
+          
+          echo ""
+          echo "✅ Код зарегистрирован: $ACCESS_CODE"
+      
+      - name: Show info
+        run: |
+          echo "=================================================="
+          echo "          ✅ VPS IS READY ✅"
+          echo "=================================================="
+          echo ""
+          echo "  🤖 BOT: @${{ secrets.CENTRAL_BOT_USERNAME }}"
+          echo "  🔑 CODE: $ACCESS_CODE"
+          echo "  🌐 IP:   $(tailscale ip -4)"
+          echo ""
+          echo "=================================================="
+          echo "  📱 Send this code to the bot: $ACCESS_CODE"
+          echo "=================================================="
+      
+      - name: Keep alive
+        run: sleep 21000
