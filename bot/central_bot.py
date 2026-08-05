@@ -13,7 +13,7 @@ import logging
 import argparse
 import subprocess
 from datetime import datetime, timedelta
-from typing import Dict, Set, Optional
+from typing import Dict, Set, Optional, List  # ⭐ ДОБАВИЛИ List
 from threading import Lock
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
