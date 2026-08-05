@@ -3,10 +3,19 @@
     "4EEB0D21": {
       "ip": "104.209.11.211",
       "password": "djmAQwBLJN3exwTd4",
-      "user_id": 0,
+      "user_id": 5609224868,
       "created": "2026-08-05T01:00:20.214309",
       "expires": "2026-08-05T01:10:20.214297"
+    },
+    "9BA15B65": {
+      "ip": "52.176.124.227",
+      "password": "CxpLRYKt7HZuhqt5sGFW",
+      "user_id": 0,
+      "created": "2026-08-05T01:03:06.212288",
+      "expires": "2026-08-05T01:13:06.212277"
     }
   },
-  "trusted": []
+  "trusted": [
+    5609224868
+  ]
 }
