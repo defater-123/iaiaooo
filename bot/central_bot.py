@@ -584,10 +584,11 @@ async def addons_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     keyboard = []
     for addon in addons:
         status_icon = "▶️" if addon['running'] else "⏸️"
+        # ⭐ МЕНЯЕМ callback_data на простой формат
         keyboard.append([
             InlineKeyboardButton(
                 f"{status_icon} {addon['name']}",
-                callback_data=f"addon_menu_{addon['folder']}"
+                callback_data=f"addon_{addon['folder']}"  # Было: addon_menu_{folder}
             )
         ])
     
@@ -613,6 +614,7 @@ async def addons_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
 
 async def addon_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Управление конкретным аддоном"""
@@ -676,6 +678,7 @@ async def addon_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+
 async def addon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик кнопок аддонов"""
     query = update.callback_query
@@ -687,72 +690,131 @@ async def addon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     
     data = query.data
+    print(f"🔍 Получен callback: {data}")  # Для отладки
     
+    # Обработка кнопки "Назад"
+    if data == "addons_back":
+        await addons_command(update, context)
+        return
+    
+    # Обработка кнопки "Обновить"
     if data == "addons_refresh":
         addon_manager.reload()
         await addons_command(update, context)
         return
     
-    if data == "addons_back":
-        await addons_command(update, context)
+    # Разбираем: addon_ip_checker, addon_start_ip_checker, addon_stop_ip_checker и т.д.
+    parts = data.split('_', 2)  # Максимум 3 части
+    print(f"🔍 Разобрано: {parts}")
+    
+    if len(parts) < 2:
+        await query.edit_message_text("❌ Неизвестная команда", parse_mode='HTML')
         return
     
-    parts = data.split('_')
-    if len(parts) < 3:
-        return
-    
-    action = parts[1]
-    folder = '_'.join(parts[2:])
-    
-    addon = addon_manager.get_addon(folder)
-    if not addon:
-        await query.edit_message_text(f"❌ Аддон {folder} не найден", parse_mode='HTML')
-        return
-    
-    result = None
-    if action == 'start':
-        result = addon.start()
-        await query.edit_message_text(
-            f"🔄 <b>Запуск аддона</b>\n\n"
-            f"📦 {addon.config['name']}\n"
-            f"📊 Статус: {result.get('status', 'unknown')}\n"
-            f"💬 {result.get('message', '')}",
-            parse_mode='HTML'
-        )
-    elif action == 'stop':
-        result = addon.stop()
-        await query.edit_message_text(
-            f"⏹️ <b>Остановка аддона</b>\n\n"
-            f"📦 {addon.config['name']}\n"
-            f"📊 Статус: {result.get('status', 'unknown')}\n"
-            f"💬 {result.get('message', '')}",
-            parse_mode='HTML'
-        )
-    elif action == 'status':
-        result = addon.status()
-        await query.edit_message_text(
-            f"🔄 <b>Статус аддона</b>\n\n"
-            f"📦 {addon.config['name']}\n"
-            f"📊 Статус: {result.get('status', 'unknown')}",
-            parse_mode='HTML'
-        )
-    elif action == 'info':
+    # Если формат: addon_ip_checker (просто открыть меню)
+    if len(parts) == 2:
+        folder = parts[1]
+        addon = addon_manager.get_addon(folder)
+        if not addon:
+            await query.edit_message_text(f"❌ Аддон {folder} не найден", parse_mode='HTML')
+            return
+        
+        # Показываем меню аддона (как /addon)
         info = addon.get_info()
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("▶️ Запустить", callback_data=f"addon_start_{folder}"),
+                InlineKeyboardButton("⏹️ Остановить", callback_data=f"addon_stop_{folder}")
+            ],
+            [
+                InlineKeyboardButton("🔄 Статус", callback_data=f"addon_status_{folder}"),
+                InlineKeyboardButton("📋 Инфо", callback_data=f"addon_info_{folder}")
+            ],
+            [InlineKeyboardButton("⬅️ Назад к аддонам", callback_data="addons_back")]
+        ]
+        
+        status_text = "▶️ Запущен" if info['running'] else "⏸️ Остановлен"
+        status_icon = "🟢" if info['running'] else "⚪"
+        
         text = (
-            f"📋 <b>Информация об аддоне</b>\n"
+            f"{status_icon} <b>{info['name']}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"📌 Название: {info['name']}\n"
+            f"📝 {info['description']}\n"
+            f"📊 Статус: {status_text}\n"
             f"📌 Версия: {info['version']}\n"
-            f"📌 Автор: {info['author']}\n"
-            f"📌 Описание: {info['description']}\n"
-            f"📌 Статус: {'▶️ Запущен' if info['running'] else '⏸️ Остановлен'}\n"
-            f"📌 Тип: {info['type']}\n"
-            f"📌 Команды: {', '.join(info.get('commands', []))}\n"
-            f"📌 Автозапуск: {'Да' if info['startup'] == 'yes' else 'Нет'}"
+            f"👤 Автор: {info['author']}\n"
+            f"📂 Папка: {folder}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━"
         )
-        await query.edit_message_text(text, parse_mode='HTML')
-    else:
-        await query.edit_message_text(f"❌ Неизвестное действие: {action}", parse_mode='HTML')
+        
+        await query.edit_message_text(
+            text,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+    
+    # Если формат: addon_start_ip_checker, addon_stop_ip_checker и т.д.
+    if len(parts) == 3:
+        action = parts[1]
+        folder = parts[2]
+        
+        print(f"🔍 Действие: {action}, Папка: {folder}")
+        
+        addon = addon_manager.get_addon(folder)
+        if not addon:
+            await query.edit_message_text(f"❌ Аддон {folder} не найден", parse_mode='HTML')
+            return
+        
+        result = None
+        if action == 'start':
+            result = addon.start()
+            await query.edit_message_text(
+                f"🔄 <b>Запуск аддона</b>\n\n"
+                f"📦 {addon.config['name']}\n"
+                f"📊 Статус: {result.get('status', 'unknown')}\n"
+                f"💬 {result.get('message', '')}",
+                parse_mode='HTML'
+            )
+        elif action == 'stop':
+            result = addon.stop()
+            await query.edit_message_text(
+                f"⏹️ <b>Остановка аддона</b>\n\n"
+                f"📦 {addon.config['name']}\n"
+                f"📊 Статус: {result.get('status', 'unknown')}\n"
+                f"💬 {result.get('message', '')}",
+                parse_mode='HTML'
+            )
+        elif action == 'status':
+            result = addon.status()
+            await query.edit_message_text(
+                f"🔄 <b>Статус аддона</b>\n\n"
+                f"📦 {addon.config['name']}\n"
+                f"📊 Статус: {result.get('status', 'unknown')}",
+                parse_mode='HTML'
+            )
+        elif action == 'info':
+            info = addon.get_info()
+            text = (
+                f"📋 <b>Информация об аддоне</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📌 Название: {info['name']}\n"
+                f"📌 Версия: {info['version']}\n"
+                f"📌 Автор: {info['author']}\n"
+                f"📌 Описание: {info['description']}\n"
+                f"📌 Статус: {'▶️ Запущен' if info['running'] else '⏸️ Остановлен'}\n"
+                f"📌 Тип: {info['type']}\n"
+                f"📌 Команды: {', '.join(info.get('commands', []))}\n"
+                f"📌 Автозапуск: {'Да' if info['startup'] == 'yes' else 'Нет'}"
+            )
+            await query.edit_message_text(text, parse_mode='HTML')
+        else:
+            await query.edit_message_text(f"❌ Неизвестное действие: {action}", parse_mode='HTML')
+        return
+    
+    # Если ничего не подошло
+    await query.edit_message_text("❌ Неизвестный формат команды", parse_mode='HTML')
 
 # ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
 
