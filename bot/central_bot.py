@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Центральный Telegram Бот для VPS
-Спящий режим - отвечает только на валидные коды
+УМНЫЙ БОТ - Всё в одном!
+- Хранит сессии в памяти
+- Автоматически даёт доступ по коду
+- Может добавлять коды через аргументы командной строки
+- Никаких API не нужно (но поддерживает)
 """
 
 import os
@@ -17,13 +20,13 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 
 # ==================== НАСТРОЙКА ====================
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 # ==================== КОНФИГ ====================
-MAX_SESSIONS = 50
+SESSION_FILE = "sessions.json"
 CODE_EXPIRE_MINUTES = 10
 CLEANUP_INTERVAL = 300  # 5 минут
 
@@ -31,58 +34,58 @@ CLEANUP_INTERVAL = 300  # 5 минут
 class SessionManager:
     def __init__(self):
         self.sessions: Dict[str, Dict] = {}  # code -> data
+        self.users: Dict[int, str] = {}      # user_id -> code
         self.trusted: Set[int] = set()       # user_id
-        self.user_codes: Dict[int, str] = {} # user_id -> code
         self._lock = Lock()
         self._load()
     
     def _load(self):
+        """Загружает сессии из файла"""
         try:
-            if os.path.exists('sessions.json'):
-                with open('sessions.json', 'r') as f:
+            if os.path.exists(SESSION_FILE):
+                with open(SESSION_FILE, 'r') as f:
                     data = json.load(f)
                     self.sessions = data.get('sessions', {})
                     self.trusted = set(data.get('trusted', []))
-                    # Восстанавливаем user_codes
                     for code, info in self.sessions.items():
-                        if 'user_id' in info and info['user_id']:
-                            self.user_codes[info['user_id']] = code
-                    logger.info(f"Загружено: {len(self.sessions)} сессий, {len(self.trusted)} пользователей")
+                        if info.get('user_id'):
+                            self.users[info['user_id']] = code
+                    logger.info(f"Загружено {len(self.sessions)} сессий, {len(self.trusted)} пользователей")
         except Exception as e:
             logger.error(f"Ошибка загрузки: {e}")
     
     def _save(self):
+        """Сохраняет сессии в файл"""
         try:
             data = {
                 'sessions': self.sessions,
                 'trusted': list(self.trusted)
             }
-            with open('sessions.json', 'w') as f:
+            with open(SESSION_FILE, 'w') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
             logger.error(f"Ошибка сохранения: {e}")
     
-    def register(self, code: str, ip: str, password: str) -> bool:
+    def add_code(self, code: str, ip: str, password: str) -> bool:
+        """Добавляет новый код (из workflow или вручную)"""
         with self._lock:
-            if len(self.sessions) >= MAX_SESSIONS:
+            # Проверяем, не занят ли код
+            if code in self.sessions:
                 return False
-            
-            # Удаляем старые сессии пользователя (если есть)
-            for old_code, data in list(self.sessions.items()):
-                if data.get('user_id') == 0:  # Временные коды без user_id
-                    del self.sessions[old_code]
             
             self.sessions[code] = {
                 'ip': ip,
                 'password': password,
-                'user_id': 0,  # Пока неизвестен
+                'user_id': 0,
                 'created': datetime.now().isoformat(),
                 'expires': (datetime.now() + timedelta(minutes=CODE_EXPIRE_MINUTES)).isoformat()
             }
             self._save()
+            logger.info(f"✅ Код зарегистрирован: {code} для IP {ip}")
             return True
     
     def activate(self, code: str, user_id: int) -> Optional[Dict]:
+        """Активирует код для пользователя"""
         with self._lock:
             if code not in self.sessions:
                 return None
@@ -94,19 +97,25 @@ class SessionManager:
             if datetime.now() > expires:
                 del self.sessions[code]
                 self._save()
+                logger.info(f"Код {code} истек")
                 return None
             
-            # Активируем для пользователя
+            # Активируем
             data['user_id'] = user_id
             self.trusted.add(user_id)
-            self.user_codes[user_id] = code
+            self.users[user_id] = code
             self._save()
             
+            logger.info(f"✅ Код {code} активирован для пользователя {user_id}")
             return {'ip': data['ip'], 'password': data['password']}
     
     def get_user_session(self, user_id: int) -> Optional[Dict]:
-        code = self.user_codes.get(user_id)
-        if code and code in self.sessions:
+        """Получает сессию пользователя"""
+        if user_id not in self.users:
+            return None
+        
+        code = self.users[user_id]
+        if code in self.sessions:
             data = self.sessions[code]
             # Проверяем срок
             expires = datetime.fromisoformat(data['expires'])
@@ -114,24 +123,26 @@ class SessionManager:
                 return {'ip': data['ip'], 'password': data['password']}
         return None
     
+    def is_trusted(self, user_id: int) -> bool:
+        return user_id in self.trusted
+    
     def revoke(self, user_id: int) -> bool:
         with self._lock:
-            if user_id in self.user_codes:
-                code = self.user_codes[user_id]
+            if user_id in self.users:
+                code = self.users[user_id]
                 if code in self.sessions:
                     del self.sessions[code]
-                del self.user_codes[user_id]
+                del self.users[user_id]
             
             if user_id in self.trusted:
                 self.trusted.remove(user_id)
             
             self._save()
+            logger.info(f"Доступ отозван для пользователя {user_id}")
             return True
     
-    def is_trusted(self, user_id: int) -> bool:
-        return user_id in self.trusted
-    
     def cleanup(self):
+        """Удаляет истекшие сессии"""
         with self._lock:
             expired = []
             for code, data in self.sessions.items():
@@ -141,10 +152,9 @@ class SessionManager:
             
             for code in expired:
                 del self.sessions[code]
-                # Если код был привязан к пользователю
-                for uid, c in list(self.user_codes.items()):
+                for uid, c in list(self.users.items()):
                     if c == code:
-                        del self.user_codes[uid]
+                        del self.users[uid]
                         if uid in self.trusted:
                             self.trusted.remove(uid)
             
@@ -152,50 +162,47 @@ class SessionManager:
                 self._save()
                 logger.info(f"Удалено {len(expired)} истекших сессий")
     
-    def stats(self) -> Dict:
+    def get_stats(self) -> Dict:
         return {
             'sessions': len(self.sessions),
-            'trusted': len(self.trusted)
+            'trusted': len(self.trusted),
+            'users': len(self.users)
         }
 
 # ==================== ИНИЦИАЛИЗАЦИЯ ====================
 manager = SessionManager()
 
-# ==================== ОБРАБОТЧИКИ КОМАНД ====================
+# ==================== ОБРАБОТЧИКИ ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/start - приветствие"""
-    user_id = update.effective_chat.id
     username = update.effective_user.username or "без username"
     
-    # Проверяем, есть ли уже доступ
-    session = manager.get_user_session(user_id)
+    session = manager.get_user_session(update.effective_chat.id)
     if session:
         await update.message.reply_text(
             f"✅ <b>Ваш сервер активен!</b>\n\n"
             f"🌐 IP: <code>{session['ip']}</code>\n"
             f"🔑 Пароль: <code>{session['password']}</code>\n\n"
-            f"Подключение: <code>ssh runner@{session['ip']}</code>",
+            f"SSH: <code>ssh runner@{session['ip']}</code>",
             parse_mode='HTML'
         )
         return
     
     await update.message.reply_text(
         f"👋 Привет, {username}!\n\n"
-        f"📌 <b>Как получить VPS:</b>\n"
-        f"1. Форкни репозиторий\n"
-        f"2. Запусти GitHub Actions\n"
-        f"3. Скопируй код из логов\n"
-        f"4. Отправь код мне\n\n"
-        f"⚡ <i>Просто отправь 8-значный код</i>",
+        f"📌 Отправь код доступа, который ты видишь в логах GitHub Actions.\n\n"
+        f"Код выглядит так: <code>A1B2C3D4</code>\n\n"
+        f"🔹 Команды:\n"
+        f"/start - это сообщение\n"
+        f"/myserver - показать данные сервера\n"
+        f"/revoke - отозвать доступ",
         parse_mode='HTML'
     )
 
 async def myserver(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/myserver - показать данные сервера"""
     user_id = update.effective_chat.id
-    
     session = manager.get_user_session(user_id)
+    
     if not session:
         await update.message.reply_text(
             "❌ У вас нет активного сервера.\n"
@@ -214,7 +221,6 @@ async def myserver(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/revoke - отозвать доступ"""
     user_id = update.effective_chat.id
     
     if manager.revoke(user_id):
@@ -229,31 +235,36 @@ async def revoke(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             parse_mode='HTML'
         )
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/stats - статистика (только для админа)"""
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Только для администратора"""
     ADMIN_ID = int(os.getenv('ADMIN_CHAT_ID', '0'))
     if update.effective_chat.id != ADMIN_ID:
         return
     
-    s = manager.stats()
+    stats = manager.get_stats()
     await update.message.reply_text(
-        f"📊 <b>Статистика</b>\n\n"
-        f"Активных сессий: {s['sessions']}\n"
-        f"Доверенных пользователей: {s['trusted']}",
+        f"📊 <b>Статистика бота</b>\n\n"
+        f"Активных сессий: {stats['sessions']}\n"
+        f"Доверенных пользователей: {stats['trusted']}\n"
+        f"Активных пользователей: {stats['users']}",
         parse_mode='HTML'
     )
 
-# ==================== ОСНОВНОЙ ОБРАБОТЧИК ====================
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обрабатывает только коды доступа"""
+    """Обрабатывает коды доступа"""
     user_id = update.effective_chat.id
     username = update.effective_user.username or "без username"
     text = update.message.text.strip().upper()
     
-    # ⭐ КЛЮЧЕВОЙ МОМЕНТ: проверяем, что это код (8 символов, только буквы/цифры)
+    # Проверяем формат кода
     if len(text) != 8 or not text.isalnum():
-        return  # 🚫 ИГНОРИРУЕМ - бот "спит"
+        await update.message.reply_text(
+            f"❌ Неверный формат!\n\n"
+            f"Код должен быть 8 символов (буквы и цифры).\n"
+            f"Пример: <code>A1B2C3D4</code>",
+            parse_mode='HTML'
+        )
+        return
     
     # Проверяем, есть ли уже доступ
     if manager.is_trusted(user_id):
@@ -266,61 +277,80 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
         return
     
-    # Пытаемся активировать код
+    # Активируем код
     session = manager.activate(text, user_id)
     
     if session:
-        # ✅ УСПЕШНАЯ АКТИВАЦИЯ
         await update.message.reply_text(
             f"🎉 <b>ДОСТУП ПРЕДОСТАВЛЕН!</b>\n\n"
+            f"🖥️ <b>Информация о сервере:</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
             f"🌐 IP: <code>{session['ip']}</code>\n"
             f"👤 Пользователь: <code>runner</code>\n"
-            f"🔑 Пароль: <code>{session['password']}</code>\n\n"
-            f"SSH: <code>ssh runner@{session['ip']}</code>\n\n"
-            f"⏱️ Сервер активен ~6 часов",
+            f"🔑 Пароль: <code>{session['password']}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━\n\n"
+            f"🔹 <b>SSH подключение:</b>\n"
+            f"<code>ssh runner@{session['ip']}</code>\n\n"
+            f"⏱️ Сервер активен ~6 часов\n"
+            f"🔄 Авто-перезапуск каждые 6 часов",
             parse_mode='HTML'
         )
         logger.info(f"✅ АКТИВИРОВАН: @{username} (ID: {user_id}) код {text}")
     else:
-        # ❌ НЕВЕРНЫЙ КОД - молчим (спящий режим)
-        logger.debug(f"❌ Неверный код от @{username}: {text}")
-
-# ==================== ОЧИСТКА ====================
+        await update.message.reply_text(
+            f"❌ <b>Неверный код!</b>\n\n"
+            f"Код <code>{text}</code> не найден.\n"
+            f"Проверьте код в логах GitHub Actions.\n\n"
+            f"💡 Код действителен только {CODE_EXPIRE_MINUTES} минут после генерации.",
+            parse_mode='HTML'
+        )
 
 async def cleanup_task(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Периодическая очистка"""
     manager.cleanup()
 
 # ==================== ЗАПУСК ====================
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='Умный Telegram бот для VPS')
     parser.add_argument('--token', required=True, help='Токен бота')
-    parser.add_argument('--admin-id', help='ID админа')
+    parser.add_argument('--admin-id', help='ID администратора (для /stats)')
+    parser.add_argument('--add-code', help='Добавить код: code:ip:password')
     args = parser.parse_args()
     
+    # Если нужно добавить код (из workflow)
+    if args.add_code:
+        parts = args.add_code.split(':')
+        if len(parts) == 3:
+            code, ip, password = parts
+            if manager.add_code(code, ip, password):
+                print(f"✅ Код {code} добавлен!")
+                return 0
+            else:
+                print(f"❌ Код {code} уже существует!")
+                return 1
+        else:
+            print("❌ Формат: code:ip:password")
+            return 1
+    
+    # Запускаем бота
     if args.admin_id:
         os.environ['ADMIN_CHAT_ID'] = args.admin_id
     
     app = Application.builder().token(args.token).build()
-    
-    # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("myserver", myserver))
     app.add_handler(CommandHandler("revoke", revoke))
-    app.add_handler(CommandHandler("stats", stats))
-    
-    # Обработчик сообщений (только коды)
+    app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Периодическая очистка
+    # Очистка каждые 5 минут
     job_queue = app.job_queue
     if job_queue:
         job_queue.run_repeating(cleanup_task, interval=CLEANUP_INTERVAL, first=10)
     
-    logger.info("🤖 Бот запущен (спящий режим)")
-    logger.info(f"📊 Макс. сессий: {MAX_SESSIONS}")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("🤖 УМНЫЙ БОТ ЗАПУЩЕН!")
+    logger.info(f"📊 Активных сессий: {len(manager.sessions)}")
+    app.run_polling()
 
 if __name__ == '__main__':
     main()
