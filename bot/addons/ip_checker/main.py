@@ -5,8 +5,7 @@
 """
 
 import requests
-import socket
-from typing import Dict, Any
+from typing import Dict
 
 class Addon:
     def __init__(self):
