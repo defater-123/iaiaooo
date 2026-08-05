@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 УМНЫЙ БОТ для управления VPS
+- Сохраняет пользователей в Saves/user/
 - Полное управление через команды
 - Выполнение команд без /exec
 - Поддержка нескольких серверов
-- Мониторинг активности
 """
 
 import os
@@ -12,7 +12,6 @@ import json
 import logging
 import argparse
 import subprocess
-import re
 from datetime import datetime, timedelta
 from typing import Dict, Set, Optional
 from threading import Lock
@@ -27,10 +26,89 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ==================== ПУТИ ====================
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SAVES_DIR = os.path.join(BASE_DIR, "Saves")
+USER_DIR = os.path.join(SAVES_DIR, "user")
+SESSION_FILE = os.path.join(SAVES_DIR, "sessions.json")
+
+# Создаем папки если их нет
+os.makedirs(USER_DIR, exist_ok=True)
+os.makedirs(SAVES_DIR, exist_ok=True)
+
 # ==================== КОНФИГ ====================
-SESSION_FILE = "sessions.json"
 CODE_EXPIRE_MINUTES = 10
 CLEANUP_INTERVAL = 300  # 5 минут
+
+# ==================== РАБОТА С ФАЙЛАМИ ПОЛЬЗОВАТЕЛЕЙ ====================
+
+def get_user_file(user_id: int) -> str:
+    """Возвращает путь к файлу пользователя"""
+    return os.path.join(USER_DIR, f"{user_id}.txt")
+
+def save_user_data(user_id: int, data: Dict) -> None:
+    """Сохраняет данные пользователя в файл"""
+    try:
+        file_path = get_user_file(user_id)
+        with open(file_path, 'w') as f:
+            json.dump(data, f, indent=2)
+        logger.info(f"✅ Сохранен пользователь {user_id}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения пользователя {user_id}: {e}")
+
+def load_user_data(user_id: int) -> Optional[Dict]:
+    """Загружает данные пользователя из файла"""
+    try:
+        file_path = get_user_file(user_id)
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки пользователя {user_id}: {e}")
+    return None
+
+def delete_user_data(user_id: int) -> bool:
+    """Удаляет файл пользователя"""
+    try:
+        file_path = get_user_file(user_id)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            logger.info(f"🗑️ Удален пользователь {user_id}")
+            return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка удаления пользователя {user_id}: {e}")
+    return False
+
+def get_all_users() -> List[int]:
+    """Получает список всех пользователей"""
+    users = []
+    try:
+        for file in os.listdir(USER_DIR):
+            if file.endswith('.txt'):
+                try:
+                    user_id = int(file.replace('.txt', ''))
+                    users.append(user_id)
+                except:
+                    pass
+    except Exception as e:
+        logger.error(f"❌ Ошибка получения списка пользователей: {e}")
+    return users
+
+def get_user_stats() -> Dict:
+    """Получает статистику по пользователям"""
+    users = get_all_users()
+    active = 0
+    for user_id in users:
+        data = load_user_data(user_id)
+        if data and data.get('active', False):
+            # Проверяем срок
+            expires = datetime.fromisoformat(data.get('expires', datetime.now().isoformat()))
+            if datetime.now() < expires:
+                active += 1
+    return {
+        'total': len(users),
+        'active': active
+    }
 
 # ==================== МЕНЕДЖЕР СЕССИЙ ====================
 class SessionManager:
@@ -42,20 +120,49 @@ class SessionManager:
         self._load()
     
     def _load(self):
+        """Загружает сессии и пользователей"""
         try:
+            # Загружаем сессии
             if os.path.exists(SESSION_FILE):
                 with open(SESSION_FILE, 'r') as f:
                     data = json.load(f)
                     self.sessions = data.get('sessions', {})
                     self.trusted = set(data.get('trusted', []))
+                    
+                    # Восстанавливаем user_id -> code
                     for code, info in self.sessions.items():
                         if info.get('user_id'):
                             self.users[info['user_id']] = code
+                    
                     logger.info(f"Загружено {len(self.sessions)} сессий, {len(self.trusted)} пользователей")
+            
+            # Загружаем пользователей из папки Saves/user/
+            for user_id in get_all_users():
+                user_data = load_user_data(user_id)
+                if user_data:
+                    # Если пользователь есть в файлах но нет в сессиях - восстанавливаем
+                    if user_id not in self.users:
+                        code = user_data.get('code')
+                        if code and code in self.sessions:
+                            self.users[user_id] = code
+                            self.trusted.add(user_id)
+                            self.sessions[code]['user_id'] = user_id
+                            logger.info(f"♻️ Восстановлен пользователь {user_id} из файла")
+                    
+                    # Обновляем активность
+                    if user_data.get('active', False):
+                        expires = datetime.fromisoformat(user_data.get('expires', datetime.now().isoformat()))
+                        if datetime.now() > expires:
+                            user_data['active'] = False
+                            save_user_data(user_id, user_data)
+            
+            self._save()
+            
         except Exception as e:
             logger.error(f"Ошибка загрузки: {e}")
     
     def _save(self):
+        """Сохраняет сессии"""
         try:
             data = {
                 'sessions': self.sessions,
@@ -71,13 +178,14 @@ class SessionManager:
             if code in self.sessions:
                 return False
             
+            expires = (datetime.now() + timedelta(minutes=CODE_EXPIRE_MINUTES)).isoformat()
+            
             self.sessions[code] = {
                 'ip': ip,
                 'password': password,
                 'user_id': 0,
                 'created': datetime.now().isoformat(),
-                'expires': (datetime.now() + timedelta(minutes=CODE_EXPIRE_MINUTES)).isoformat(),
-                'last_activity': datetime.now().isoformat()
+                'expires': expires
             }
             self._save()
             logger.info(f"✅ Код зарегистрирован: {code} для {ip}")
@@ -95,11 +203,26 @@ class SessionManager:
                 self._save()
                 return None
             
+            # Активируем
             data['user_id'] = user_id
             data['activated_at'] = datetime.now().isoformat()
             self.trusted.add(user_id)
             self.users[user_id] = code
             self._save()
+            
+            # Сохраняем пользователя в файл
+            user_data = {
+                'user_id': user_id,
+                'code': code,
+                'ip': data['ip'],
+                'password': data['password'],
+                'active': True,
+                'activated_at': data['activated_at'],
+                'expires': data['expires'],
+                'last_activity': datetime.now().isoformat()
+            }
+            save_user_data(user_id, user_data)
+            
             return {'ip': data['ip'], 'password': data['password']}
     
     def get_user_session(self, user_id: int) -> Optional[Dict]:
@@ -129,6 +252,10 @@ class SessionManager:
                 self.trusted.remove(user_id)
             
             self._save()
+            
+            # Удаляем файл пользователя
+            delete_user_data(user_id)
+            
             return True
     
     def cleanup(self):
@@ -140,17 +267,27 @@ class SessionManager:
                     expired.append(code)
             
             for code in expired:
+                user_id = self.sessions[code].get('user_id')
+                if user_id:
+                    # Деактивируем пользователя
+                    user_data = load_user_data(user_id)
+                    if user_data:
+                        user_data['active'] = False
+                        save_user_data(user_id, user_data)
+                    if user_id in self.users:
+                        del self.users[user_id]
+                    if user_id in self.trusted:
+                        self.trusted.remove(user_id)
+                
                 del self.sessions[code]
-                for uid, c in list(self.users.items()):
-                    if c == code:
-                        del self.users[uid]
-                        if uid in self.trusted:
-                            self.trusted.remove(uid)
             
             if expired:
                 self._save()
+                logger.info(f"🗑️ Удалено {len(expired)} истекших сессий")
     
     def get_stats(self) -> Dict:
+        user_stats = get_user_stats()
+        
         # Считаем активных пользователей за последние 10 минут
         active_users = 0
         for code, data in self.sessions.items():
@@ -164,12 +301,13 @@ class SessionManager:
             'trusted': len(self.trusted),
             'users': len(self.users),
             'active_users': active_users,
-            'available_codes': len([c for c, d in self.sessions.items() if d.get('user_id') == 0])
+            'available_codes': len([c for c, d in self.sessions.items() if d.get('user_id') == 0]),
+            'total_users': user_stats['total'],
+            'total_active': user_stats['active']
         }
 
 # ==================== ИНИЦИАЛИЗАЦИЯ ====================
 manager = SessionManager()
-user_servers: Dict[int, Dict] = {}  # user_id -> server_data
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
@@ -271,6 +409,7 @@ def get_detailed_server_info() -> str:
         f"├─ Доверенных пользователей: {stats['trusted']}\n"
         f"├─ Активных пользователей (10мин): {stats['active_users']}\n"
         f"├─ Доступных кодов: {stats['available_codes']}\n"
+        f"├─ Всего пользователей в базе: {stats['total_users']}\n"
         f"└─ Поиск новых пользователей: 🔍 АКТИВЕН\n\n"
         
         f"⏰ <b>Время:</b>\n"
@@ -357,7 +496,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
     
     help_text += "━━━━━━━━━━━━━━━━━━━━━━\n"
-    help_text += "<i>Бот поддерживает несколько серверов</i>"
+    help_text += "<i>Бот сохраняет пользователей в папку Saves/user/</i>"
     
     await update.message.reply_text(help_text, parse_mode='HTML')
 
@@ -374,7 +513,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"👥 Доверенных пользователей: {stats['trusted']}\n"
         f"🟢 Активных сейчас: {stats['active_users']}\n"
         f"🔑 Доступных кодов: {stats['available_codes']}\n"
+        f"📁 Пользователей в базе: {stats['total_users']}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💾 Сохранено в: Saves/user/\n"
         f"🔄 Поиск новых пользователей: 🔍 АКТИВЕН\n"
         f"⏰ Сессии обновляются каждые 6 часов\n"
     )
@@ -550,9 +691,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         session = manager.activate(text_upper, user_id)
         
         if session:
-            # Сохраняем данные для команд
-            user_servers[user_id] = session
-            
             await update.message.reply_text(
                 f"🎉 <b>ДОСТУП ПРЕДОСТАВЛЕН!</b>\n\n"
                 f"🖥️ <b>Информация о сервере:</b>\n"
@@ -565,6 +703,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"• Писать команды прямо в чат: <code>ls -la</code>\n"
                 f"• Использовать /info для детальной информации\n"
                 f"• Использовать /shell для интерактивной оболочки\n\n"
+                f"💾 <b>Вы сохранены в:</b> Saves/user/{user_id}.txt\n"
                 f"⏱️ Сервер активен ~6 часов",
                 parse_mode='HTML'
             )
@@ -574,13 +713,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.debug(f"❌ Неверный код от @{username}: {text_upper}")
         return
     
-    # ⭐ ОБРАБОТКА КОМАНД (без /exec)
+    # ОБРАБОТКА КОМАНД (без /exec)
     if manager.is_trusted(user_id):
         # Проверяем, не является ли это командой бота
         if text.startswith('/'):
             return  # Пропускаем, обработано другими handlers
         
-        # ⭐ Выполняем команду на сервере
+        # Обновляем активность пользователя
+        user_data = load_user_data(user_id)
+        if user_data:
+            user_data['last_activity'] = datetime.now().isoformat()
+            user_data['active'] = True
+            save_user_data(user_id, user_data)
+        
+        # Выполняем команду на сервере
         await update.message.reply_text(
             f"🔄 <b>Выполнение:</b> <code>{text}</code>",
             parse_mode='HTML'
@@ -589,7 +735,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         output = execute_command(text)
         
         # Проверяем на ошибки
-        if "Ошибка" in output:
+        if "Ошибка" in output or "error" in output.lower():
             await update.message.reply_text(
                 f"❌ <b>Ошибка выполнения</b>\n\n"
                 f"```\n{output}\n```",
@@ -666,6 +812,7 @@ def main():
         job_queue.run_repeating(cleanup_task, interval=CLEANUP_INTERVAL, first=10)
     
     logger.info("🤖 УМНЫЙ БОТ ЗАПУЩЕН!")
+    logger.info(f"📁 Пользователи сохраняются в: {USER_DIR}")
     logger.info("📊 Поддерживает команды: /help, /status, /info, /shell")
     logger.info("📝 Просто пиши команды в чат (без /exec)!")
     app.run_polling()
