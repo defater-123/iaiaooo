@@ -17,17 +17,16 @@ from threading import Lock
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# ИМПОРТ ЗАГРУЗЧИКА АДДОНОВ
 from addon_loader import AddonManager
 
-# НАСТРОЙКА
+# ==================== НАСТРОЙКА ====================
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ПУТИ
+# ==================== ПУТИ ====================
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SAVES_DIR = os.path.join(BASE_DIR, "Saves")
 USER_DIR = os.path.join(SAVES_DIR, "user")
@@ -36,11 +35,11 @@ SESSION_FILE = os.path.join(SAVES_DIR, "sessions.json")
 os.makedirs(USER_DIR, exist_ok=True)
 os.makedirs(SAVES_DIR, exist_ok=True)
 
-# КОНФИГ
+# ==================== КОНФИГ ====================
 CODE_EXPIRE_MINUTES = 10
 CLEANUP_INTERVAL = 300
 
-# ЗАГРУЗКА АДДОНОВ
+# ==================== ЗАГРУЗКА АДДОНОВ ====================
 addon_manager = AddonManager()
 
 # ==================== GIT ФУНКЦИИ ====================
@@ -440,7 +439,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         help_text += (
             "\n🔹 <b>Управление:</b>\n"
             "/myserver - Данные для SSH\n"
-            "/shell - Интерактивная оболочка\n"
             "/revoke - Отозвать доступ\n\n"
             "🔹 <b>Аддоны:</b>\n"
             "/addons - Показать все аддоны\n"
@@ -584,11 +582,10 @@ async def addons_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     keyboard = []
     for addon in addons:
         status_icon = "▶️" if addon['running'] else "⏸️"
-        # ⭐ МЕНЯЕМ callback_data на простой формат
         keyboard.append([
             InlineKeyboardButton(
                 f"{status_icon} {addon['name']}",
-                callback_data=f"addon_{addon['folder']}"  # Было: addon_menu_{folder}
+                callback_data=f"addon_{addon['folder']}"
             )
         ])
     
@@ -615,7 +612,6 @@ async def addons_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
 async def addon_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Управление конкретным аддоном"""
     user_id = update.effective_chat.id
@@ -632,15 +628,36 @@ async def addon_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         )
         return
     
-    folder = context.args[0]
+    folder = context.args[0].lower()
+    
+    aliases = {
+        'checker': 'ip_checker',
+        'ip': 'ip_checker',
+        'ipchecker': 'ip_checker',
+        'myip': 'ip_checker'
+    }
+    
+    if folder in aliases:
+        folder = aliases[folder]
+    
     addon = addon_manager.get_addon(folder)
     
     if not addon:
-        await update.message.reply_text(
-            f"❌ Аддон <b>{folder}</b> не найден\n"
-            "Используйте /addons для списка",
-            parse_mode='HTML'
-        )
+        available = [a['folder'] for a in addon_manager.get_all_addons()]
+        if available:
+            await update.message.reply_text(
+                f"❌ Аддон <b>{context.args[0]}</b> не найден\n\n"
+                f"📂 Доступные аддоны:\n"
+                f"{', '.join(available)}\n\n"
+                f"Используйте /addons для списка с кнопками",
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ Аддон <b>{context.args[0]}</b> не найден\n\n"
+                "📦 Аддоны не загружены. Проверьте папку bot/addons/",
+                parse_mode='HTML'
+            )
         return
     
     info = addon.get_info()
@@ -678,7 +695,6 @@ async def addon_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
 async def addon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Обработчик кнопок аддонов"""
     query = update.callback_query
@@ -690,28 +706,23 @@ async def addon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     
     data = query.data
-    print(f"🔍 Получен callback: {data}")  # Для отладки
     
-    # Обработка кнопки "Назад"
     if data == "addons_back":
         await addons_command(update, context)
         return
     
-    # Обработка кнопки "Обновить"
     if data == "addons_refresh":
         addon_manager.reload()
         await addons_command(update, context)
         return
     
-    # Разбираем: addon_ip_checker, addon_start_ip_checker, addon_stop_ip_checker и т.д.
-    parts = data.split('_', 2)  # Максимум 3 части
-    print(f"🔍 Разобрано: {parts}")
+    parts = data.split('_', 2)
     
     if len(parts) < 2:
         await query.edit_message_text("❌ Неизвестная команда", parse_mode='HTML')
         return
     
-    # Если формат: addon_ip_checker (просто открыть меню)
+    # Формат: addon_ip_checker (открыть меню)
     if len(parts) == 2:
         folder = parts[1]
         addon = addon_manager.get_addon(folder)
@@ -719,7 +730,6 @@ async def addon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await query.edit_message_text(f"❌ Аддон {folder} не найден", parse_mode='HTML')
             return
         
-        # Показываем меню аддона (как /addon)
         info = addon.get_info()
         
         keyboard = [
@@ -755,19 +765,16 @@ async def addon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
     
-    # Если формат: addon_start_ip_checker, addon_stop_ip_checker и т.д.
+    # Формат: addon_start_ip_checker, addon_stop_ip_checker и т.д.
     if len(parts) == 3:
         action = parts[1]
         folder = parts[2]
-        
-        print(f"🔍 Действие: {action}, Папка: {folder}")
         
         addon = addon_manager.get_addon(folder)
         if not addon:
             await query.edit_message_text(f"❌ Аддон {folder} не найден", parse_mode='HTML')
             return
         
-        result = None
         if action == 'start':
             result = addon.start()
             await query.edit_message_text(
@@ -813,7 +820,6 @@ async def addon_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await query.edit_message_text(f"❌ Неизвестное действие: {action}", parse_mode='HTML')
         return
     
-    # Если ничего не подошло
     await query.edit_message_text("❌ Неизвестный формат команды", parse_mode='HTML')
 
 # ==================== ОБРАБОТЧИК СООБЩЕНИЙ ====================
