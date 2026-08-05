@@ -2,6 +2,7 @@
 """
 УМНЫЙ БОТ для управления VPS
 - Показывает прогресс команд в реальном времени
+- Читает И stdout И stderr
 - Обновляет сообщение каждые 0.5 секунды
 - Без таймаута для длительных команд
 """
@@ -12,7 +13,6 @@ import logging
 import argparse
 import subprocess
 import asyncio
-import threading
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Set, Optional, List
@@ -280,11 +280,12 @@ class SessionManager:
 # ==================== ИНИЦИАЛИЗАЦИЯ ====================
 manager = SessionManager()
 
-# ==================== СТРИМИНГ КОМАНД ====================
+# ==================== СТРИМИНГ КОМАНД (ИСПРАВЛЕННЫЙ) ====================
 
 async def execute_command_streaming(command: str, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Выполняет команду с потоковой передачей вывода в реальном времени
+    Читает И stdout И stderr
     Обновляет сообщение каждые 0.5 секунды
     """
     try:
@@ -303,56 +304,67 @@ async def execute_command_streaming(command: str, update: Update, context: Conte
             shell=True
         )
         
-        # Читаем вывод построчно
+        # Собираем вывод
         output_lines = []
         last_update = time.time()
         
+        # Читаем stdout и stderr одновременно
         while True:
-            # Читаем строку (с таймаутом 0.5 секунды)
+            # Проверяем, жив ли процесс
+            if process.returncode is not None:
+                # Процесс завершился - читаем остатки
+                break
+            
+            # Читаем из stdout
             try:
                 line = await asyncio.wait_for(
                     process.stdout.readline(),
-                    timeout=0.5
+                    timeout=0.3
                 )
+                if line:
+                    decoded = line.decode('utf-8', errors='ignore').rstrip('\n')
+                    if decoded:
+                        output_lines.append(decoded + '\n')
             except asyncio.TimeoutError:
-                # Проверяем, жив ли процесс
-                if process.returncode is not None:
-                    break
-                # Проверяем, прошло ли 0.5 секунды
-                if time.time() - last_update >= 0.5:
-                    # Обновляем сообщение с текущим выводом
-                    current_output = ''.join(output_lines[-50:])  # Последние 50 строк
-                    if current_output:
-                        display_output = current_output
-                        if len(display_output) > 3900:
-                            display_output = display_output[-3900:]
-                        try:
-                            await status_msg.edit_text(
-                                f"🔄 <b>Выполнение:</b> <code>{command}</code>\n\n"
-                                f"```\n{display_output}\n```\n\n"
-                                f"<i>⏳ Ещё выполняется... (обновлено)</i>",
-                                parse_mode='HTML'
-                            )
-                        except Exception as e:
-                            logger.warning(f"Ошибка обновления: {e}")
-                    last_update = time.time()
-                continue
+                pass
             
-            if not line:
-                # Конец вывода
+            # Читаем из stderr (туда пишется progress dd)
+            try:
+                line = await asyncio.wait_for(
+                    process.stderr.readline(),
+                    timeout=0.3
+                )
+                if line:
+                    decoded = line.decode('utf-8', errors='ignore').rstrip('\n')
+                    if decoded:
+                        output_lines.append(decoded + '\n')
+            except asyncio.TimeoutError:
+                pass
+            
+            # Проверяем, завершился ли процесс
+            if process.returncode is not None:
+                # Читаем остатки stdout
+                remaining_stdout = await process.stdout.read()
+                if remaining_stdout:
+                    decoded = remaining_stdout.decode('utf-8', errors='ignore')
+                    if decoded:
+                        output_lines.append(decoded)
+                
+                # Читаем остатки stderr
+                remaining_stderr = await process.stderr.read()
+                if remaining_stderr:
+                    decoded = remaining_stderr.decode('utf-8', errors='ignore')
+                    if decoded:
+                        output_lines.append(decoded)
                 break
             
-            # Добавляем строку
-            decoded_line = line.decode('utf-8', errors='ignore')
-            output_lines.append(decoded_line)
-            
-            # Обновляем сообщение каждые 0.5 секунды
-            if time.time() - last_update >= 0.5:
-                current_output = ''.join(output_lines[-50:])
+            # Обновляем сообщение каждые 0.5 секунды (если есть вывод)
+            if time.time() - last_update >= 0.5 and output_lines:
+                current_output = ''.join(output_lines[-100:])  # Последние 100 строк
                 if current_output:
                     display_output = current_output
-                    if len(display_output) > 3900:
-                        display_output = display_output[-3900:]
+                    if len(display_output) > 3800:
+                        display_output = display_output[-3800:]
                     try:
                         await status_msg.edit_text(
                             f"🔄 <b>Выполнение:</b> <code>{command}</code>\n\n"
@@ -369,13 +381,6 @@ async def execute_command_streaming(command: str, update: Update, context: Conte
         
         # Формируем финальный вывод
         full_output = ''.join(output_lines)
-        
-        # Проверяем ошибки
-        stderr_output = await process.stderr.read()
-        if stderr_output:
-            error_text = stderr_output.decode('utf-8', errors='ignore')
-            if error_text and "error" in error_text.lower():
-                full_output += f"\n\n⚠️ Ошибки:\n{error_text}"
         
         # Финальное сообщение
         if process.returncode == 0:
@@ -476,7 +481,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"🌐 IP: <code>{session['ip']}</code>\n\n"
             f"📌 Просто пиши команды: <code>ls -la</code>\n"
             f"Используй /help для списка команд\n\n"
-            f"🔥 <b>Длительные команды</b> показывают прогресс в реальном времени!",
+            f"🔥 <b>Длительные команды</b> показывают прогресс в реальном времени!\n"
+            f"Пример: <code>dd if=/dev/zero of=./test bs=1M count=100 status=progress</code>",
             parse_mode='HTML'
         )
     else:
@@ -515,10 +521,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "<code>df -h</code> - диск\n"
             "<code>free -h</code> - память\n"
             "<code>uptime</code> - время работы\n\n"
-            "🔥 <b>Длительные команды:</b>\n"
-            "<code>dd if=/dev/zero of=test bs=1M count=1000</code>\n"
-            "<code>find / -name \"*.txt\"</code>\n"
-            "Прогресс показывается в РЕАЛЬНОМ ВРЕМЕНИ!"
+            "🔥 <b>Длительные команды (стриминг):</b>\n"
+            "<code>dd if=/dev/zero of=./test bs=1M count=100 status=progress</code>\n"
+            "<code>find / -name \"*.txt\" 2>/dev/null</code>\n"
+            "<code>ping -c 20 google.com</code>\n\n"
+            "💡 <b>Совет:</b> dd пишет прогресс в stderr,\n"
+            "поэтому мы читаем оба потока!"
         )
     else:
         help_text += "\n⚠️ Отправь код для доступа"
@@ -540,7 +548,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"💾 Сохранено в: Saves/user/\n"
         f"🔄 Git: ✅ активен\n"
-        f"🔥 Стриминг: ✅ включен\n"
+        f"🔥 Стриминг: ✅ включен (stdout + stderr)\n"
     )
     
     if session:
@@ -587,8 +595,8 @@ async def shell_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
          InlineKeyboardButton("⚡ uptime", callback_data="shell_uptime")],
         [InlineKeyboardButton("👤 whoami", callback_data="shell_whoami"),
          InlineKeyboardButton("📁 pwd", callback_data="shell_pwd")],
-        [InlineKeyboardButton("🔄 ps aux", callback_data="shell_ps"),
-         InlineKeyboardButton("🔥 dd test", callback_data="shell_dd")],
+        [InlineKeyboardButton("🔥 dd 100MB", callback_data="shell_dd"),
+         InlineKeyboardButton("📡 ping", callback_data="shell_ping")],
     ]
     await update.message.reply_text(
         "🖥️ <b>ИНТЕРАКТИВНАЯ ОБОЛОЧКА</b>\n\nВыберите команду:",
@@ -607,13 +615,22 @@ async def shell_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         'shell_ls': 'ls -la', 'shell_df': 'df -h', 'shell_free': 'free -h',
         'shell_uptime': 'uptime', 'shell_whoami': 'whoami', 'shell_pwd': 'pwd',
         'shell_ps': 'ps aux | head -20', 'shell_netstat': 'netstat -tulpn | head -20',
-        'shell_dd': 'dd if=/dev/zero of=test bs=1M count=500 status=progress'
+        'shell_dd': 'dd if=/dev/zero of=./test bs=1M count=100 status=progress',
+        'shell_ping': 'ping -c 10 google.com'
     }
     command = cmd_map.get(query.data, 'ls -la')
     
-    # Стриминг для длительных команд
-    if 'dd' in command or 'find' in command or 'grep -R' in command:
-        await execute_command_streaming(command, update, context)
+    # Для длительных команд - стриминг
+    streaming_cmds = ['dd', 'ping', 'find', 'grep -R', 'tar -x', 'wget', 'curl -O']
+    if any(cmd in command for cmd in streaming_cmds):
+        await query.edit_message_text(f"🔄 <b>Запуск стриминга:</b> <code>{command}</code>", parse_mode='HTML')
+        # Создаем объект update для execute_command_streaming
+        # Используем query.message как update.message
+        class FakeUpdate:
+            def __init__(self, message):
+                self.message = message
+        fake_update = FakeUpdate(query.message)
+        await execute_command_streaming(command, fake_update, context)
     else:
         await query.edit_message_text(f"🔄 <b>Выполнение:</b> <code>{command}</code>", parse_mode='HTML')
         output = execute_command_simple(command)
@@ -657,7 +674,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"SSH: <code>ssh runner@{session['ip']}</code>\n\n"
                 f"💾 Сохранено в: Saves/user/{user_id}.txt\n"
                 f"📌 Просто пиши команды: <code>ls -la</code>\n"
-                f"🔥 Длительные команды показывают прогресс в реальном времени!",
+                f"🔥 Длительные команды показывают прогресс в реальном времени!\n"
+                f"Пример: <code>dd if=/dev/zero of=./test bs=1M count=100 status=progress</code>",
                 parse_mode='HTML'
             )
             logger.info(f"✅ АКТИВИРОВАН: @{username} (ID: {user_id}) код {text_upper}")
@@ -674,7 +692,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             save_user_data(user_id, user_data)
         
         # Определяем, использовать ли стриминг
-        streaming_commands = ['dd', 'find', 'grep -R', 'tar -x', 'wget', 'curl -O']
+        streaming_commands = ['dd', 'ping', 'find', 'grep -R', 'tar -x', 'wget', 'curl -O', 'status=progress']
         is_streaming = any(cmd in text for cmd in streaming_commands)
         
         if is_streaming:
@@ -736,7 +754,7 @@ def main():
     
     logger.info("🤖 УМНЫЙ БОТ ЗАПУЩЕН!")
     logger.info(f"📁 Пользователи сохраняются в: {USER_DIR}")
-    logger.info("🔥 Стриминг команд ВКЛЮЧЕН (обновление каждые 0.5с)")
+    logger.info("🔥 Стриминг команд ВКЛЮЧЕН (читает stdout + stderr)")
     logger.info("📝 Просто пиши команды в чат!")
     app.run_polling()
 
