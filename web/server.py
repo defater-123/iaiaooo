@@ -49,13 +49,21 @@ SAVES_DIR = os.path.join(BASE_DIR, "Saves")
 SESSION_FILE = os.path.join(SAVES_DIR, "sessions.json")
 TOKENS_FILE = os.path.join(SAVES_DIR, "tokens.json")
 
-CODE_EXPIRE_MINUTES = int(os.environ.get("VPS_CODE_TTL_MIN", 15))   # время жизни неиспользованного кода
-SESSION_TTL_HOURS = int(os.environ.get("VPS_SESSION_TTL_H", 6))     # длительность доступа после активации
-CLEANUP_INTERVAL = 300
-# Часовой пояс для отображения дат (GitHub-раннеры живут в UTC, из-за чего
-# локальные времена расходились и доступ «истёк» раньше срока)
-TZ_OFFSET_H = float(os.environ.get("VPS_TZ_OFFSET", 0))
-TZINFO = timezone(timedelta(hours=TZ_OFFSET_H))
+# GitHub-раннеры живут в UTC; единая временная база — UTC (+ смещение VPS_TZ_OFFSET),
+# иначе сроки сравнивались в разных шкалах и код «истёк» мгновенно.
+TZ_OFFSET_HOURS = int(os.environ.get('VPS_TZ_OFFSET', '0'))
+
+
+def now_dt():
+    """Текущее время в единой шкале (UTC + смещение), naive-datetime."""
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=TZ_OFFSET_HOURS)
+
+
+CODE_EXPIRE_MINUTES = int(os.environ.get('VPS_CODE_TTL_MIN', '15'))   # время жизни неиспользованного кода
+SESSION_TTL_HOURS = int(os.environ.get('VPS_SESSION_TTL_H', '6'))     # длительность доступа после активации
+CLEANUP_INTERVAL = 60                                                 # чаще чистим устаревшие стримы/сессии
+COMMAND_TIMEOUT = int(os.environ.get('VPS_CMD_TIMEOUT', '120'))       # макс. время одной команды в терминале
+STREAM_TTL = 120                                                      # жизнь буфера вывода стрима без клиента
 
 os.makedirs(SAVES_DIR, exist_ok=True)
 
@@ -63,24 +71,19 @@ os.makedirs(SAVES_DIR, exist_ok=True)
 FILE_ROOT = os.path.abspath(os.environ.get("VPS_FILE_ROOT", os.getcwd()))
 
 
-def now_dt():
-    """Единая временная база сервера (UTC + настраиваемое смещение)."""
-    return datetime.now(timezone.utc).astimezone(TZINFO)
-
-
 def now_iso():
     return now_dt().isoformat()
 
 
 def parse_iso(value: str):
-    """Разбирает ISO-время; старые записи без часового пояса трактуем как TZINFO."""
+    """Разбирает ISO-время в единую шкалу now_dt() (naive UTC + смещение)."""
     try:
         dt = datetime.fromisoformat(value)
     except Exception:
         return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=TZINFO)
-    return dt.astimezone(TZINFO)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt + timedelta(hours=TZ_OFFSET_HOURS)
 
 
 # ==================== GIT ====================
@@ -161,7 +164,7 @@ def add_code(code: str, ip: str, password: str) -> bool:
             'activated_at': '',
         }
         save_sessions()
-        logger.info(f"Код зарегистрирован: {code} (действует {CODE_EXPIRE_MINUTES} мин)")
+        log_step(f"🔑 КОД ЗАРЕГИСТРИРОВАН: {code} (активен {CODE_EXPIRE_MINUTES} мин, затем выдаётся токен на {SESSION_TTL_HOURS} ч)")
         return True
 
 
@@ -231,6 +234,20 @@ def cleanup_expired():
             if changed:
                 save_tokens(TOKENS)
                 save_sessions()
+
+
+def log_step(msg: str):
+    """Пишет msg в stdout и, если мы внутри GitHub Actions, дублирует в
+    $GITHUB_STEP_SUMMARY — так код доступа остаётся виден в логах даже
+    после автоматических перезапусков по расписанию."""
+    print(msg, flush=True)
+    summary = os.environ.get('GITHUB_STEP_SUMMARY', '')
+    if summary:
+        try:
+            with open(summary, 'a') as f:
+                f.write(msg + '\n')
+        except Exception:
+            pass
 
 
 def print_access_info(url: str = ''):
@@ -326,7 +343,7 @@ def list_dir(path: str):
             'name': name,
             'is_dir': os.path.isdir(full),
             'size': st.st_size,
-            'modified': datetime.fromtimestamp(st.st_mtime, TZINFO).strftime("%Y-%m-%d %H:%M"),
+            'modified': datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime("%Y-%m-%d %H:%M"),
             'permissions': oct(st.st_mode)[-3:],
         })
     return {'path': rel_to_root(d), 'root': rel_to_root(FILE_ROOT), 'files': items}
@@ -401,6 +418,8 @@ class Stream:
     def push(self, kind: str, text: str):
         with self.cond:
             self.lines.append((kind, text))
+            if kind == 'done':
+                self.done = True
             self.cond.notify_all()
 
     def finish(self):
@@ -444,22 +463,21 @@ def start_stream(command: str, cwd: str) -> 'Stream':
             try:
                 os.chdir(cwd)
                 env = dict(os.environ)
-                env['TERM'] = 'dumb'
+                env['TERM'] = 'xterm'
                 os.execvpe('/bin/bash', ['/bin/bash', '-c', command], env)
             except Exception as e:
                 os._exit(127)
         # родительский процесс: читаем из PTY до EOF/таймаута
         deadline = time.time() + COMMAND_TIMEOUT
-        buf = b''
         try:
             while True:
                 remain = deadline - time.time()
                 if remain <= 0:
                     try:
-                        os.kill(pid, signal.SIGKILL)
-                    except OSError:
+                        os.killpg(pid, signal.SIGKILL)
+                    except Exception:
                         pass
-                    stream.push('err', f'\n[команда прервана: превышен таймаут {COMMAND_TIMEOUT} сек]')
+                    stream.push('err', f'\n⏱ Команда прервана: превышено {COMMAND_TIMEOUT} сек\n')
                     break
                 try:
                     r, _, _ = select.select([fd], [], [], min(remain, 5.0))
@@ -474,10 +492,8 @@ def start_stream(command: str, cwd: str) -> 'Stream':
                         raise
                     if not chunk:
                         break
-                    buf += chunk
-                    while b'\n' in buf:
-                        line, buf = buf.split(b'\n', 1)
-                        stream.push('out', line.decode('utf-8', errors='replace') + '\n')
+                    # отдаём сырые чанки как есть: без буферизации и потери байтов
+                    stream.push('out', chunk.decode('utf-8', errors='replace'))
                 else:
                     # проверяем, не завершился ли процесс
                     try:
@@ -486,17 +502,6 @@ def start_stream(command: str, cwd: str) -> 'Stream':
                         break
                     if done_pid == pid:
                         break
-            # дочитываем остаток
-            try:
-                while True:
-                    chunk = os.read(fd, 4096)
-                    if not chunk:
-                        break
-                    buf += chunk
-            except OSError:
-                pass
-            if buf:
-                stream.push('out', buf.decode('utf-8', errors='replace'))
         except Exception as e:
             stream.push('err', str(e))
         finally:
@@ -510,10 +515,24 @@ def start_stream(command: str, cwd: str) -> 'Stream':
             except Exception:
                 code = -1
             stream.push('exit', str(code if code is not None else -1))
+            stream.push('done', '')
             stream.finish()
 
     threading.Thread(target=worker, daemon=True).start()
     return stream
+
+
+def resolve_target(body: dict, is_dir: bool) -> str:
+    """mkdir/touch: принимает либо {'path': папка, 'name': элемент},
+    либо сразу полный путь {'path': 'папка/элемент'} — оба варианта."""
+    pth = body.get('path', '.')
+    name = (body.get('name') or '').strip().strip('/')
+    if not name:
+        return safe_path(pth)          # полный путь в 'path'
+    base = safe_path(pth)
+    if os.path.exists(base) and not os.path.isdir(base):
+        raise ValueError(f"Это не папка: {base}")
+    return os.path.join(base, name)
 
 
 # ==================== HTTP HANDLER ====================
@@ -662,15 +681,22 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 while True:
                     events, pos, done = st.wait_events(pos)
+                    # внутренний служебный событие 'done' клиенту не шлём —
+                    # финальный 'done' отправляем один раз ниже
+                    events = [(k, t) for k, t in events if k != 'done']
                     for kind, text in events:
                         payload = json.dumps({'type': kind, 'text': text}, ensure_ascii=False)
                         self.wfile.write(f"data: {payload}\n\n".encode('utf-8'))
                     self.wfile.flush()
                     if done and pos >= len(st.lines):
                         self.wfile.write(b"data: {\"type\": \"done\", \"text\": \"\"}\n\n")
+                        self.wfile.flush()
+                        with STREAMS_LOCK:
+                            STREAMS.pop(stream_id, None)
                         break
                     if not events:
                         self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
@@ -700,15 +726,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == '/api/mkdir':
             try:
-                base = safe_path(body.get('path', '.'))
-                return self._json(make_entry(os.path.join(base, body['name']), True))
+                target = resolve_target(body, True)
+                return self._json(make_entry(target, True))
             except Exception as e:
                 return self._json({'error': str(e)}, 400)
 
         if route == '/api/touch':
             try:
-                base = safe_path(body.get('path', '.'))
-                return self._json(make_entry(os.path.join(base, body['name']), False))
+                target = resolve_target(body, False)
+                return self._json(make_entry(target, False))
             except Exception as e:
                 return self._json({'error': str(e)}, 400)
 
@@ -787,6 +813,29 @@ def main():
     logger.info(f"⏱ Время сервера: {now_dt().strftime('%Y-%m-%d %H:%M:%S %Z')}")
     logger.info("=" * 50)
     print_access_info()
+
+    # Актуальные данные доступа — в логи Action при КАЖДОМ запуске
+    # (включая перезапуск keep-alive workflow с новым кодом).
+    import re as _re
+    tunnel_url = ''
+    try:
+        with open(os.path.join(BASE_DIR, 'tunnel.log')) as f:
+            m = _re.search(r'https://[a-z0-9-]+\.trycloudflare\.com', f.read())
+            if m:
+                tunnel_url = m.group(0)
+    except Exception:
+        pass
+    lines = ['', '=' * 50, '🔑 АКТУАЛЬНЫЕ ДАННЫЕ ПАНЕЛИ:']
+    if tunnel_url:
+        lines.append(f'   🌍 САЙТ: {tunnel_url}')
+    for sid, sdata in list(SESSIONS.items()):
+        stt = 'токен активен до ' + sdata.get('expires', '?') if sdata.get('token') else 'ждёт активации'
+        lines.append(f'   🔑 КОД: {sid}  ({stt})')
+    if not SESSIONS:
+        lines.append('   ⚠️ Нет активных кодов — запусти «🚀 VPS Web Server» или «🔄 VPS Keep-Alive»')
+    lines.append('=' * 50)
+    log_step('\n'.join(lines))
+
     httpd.serve_forever()
 
 
