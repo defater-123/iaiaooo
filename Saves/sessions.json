@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "BA758B28": {
-      "ip": "52.161.201.83",
-      "password": "OXB6WKPbNVEnF8JvOI8",
-      "token": "",
-      "created": "2026-10-15T23:20:29.872801",
-      "expires": "2026-10-15T23:30:29.872806",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
