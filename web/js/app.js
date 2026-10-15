@@ -83,7 +83,12 @@ async function activate() {
     const res = await api('activate', { method: 'POST', body: { code } });
     $('activateBtn').disabled = false;
     if (res.error) {
-        $('authError').textContent = res.error;
+        // Различаем «код не найден» и «код просрочен», чтобы не пугать «истёк»
+        let msg = res.error;
+        if (/не найден|not found/i.test(msg)) {
+            msg = 'Код не найден на сервере. Запусти Action «🚀 VPS Web Server» заново и введи новый код из логов.';
+        }
+        $('authError').textContent = msg;
         return;
     }
     token = res.token;

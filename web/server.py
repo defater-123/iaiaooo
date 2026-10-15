@@ -16,19 +16,24 @@ VPS Manager — веб-сервер для управления сервером
 
 import argparse
 import base64
+import errno
 import json
 import logging
 import mimetypes
 import os
 import posixpath
+import pty
 import queue
 import secrets
+import select
 import shutil
+import signal
 import string
 import subprocess
+import sys
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -45,9 +50,22 @@ SAVES_DIR = os.path.join(BASE_DIR, "Saves")
 SESSION_FILE = os.path.join(SAVES_DIR, "sessions.json")
 TOKENS_FILE = os.path.join(SAVES_DIR, "tokens.json")
 
-CODE_EXPIRE_MINUTES = 10          # время жизни неиспользованного кода
-SESSION_TTL_HOURS = 6             # длительность доступа после активации
-CLEANUP_INTERVAL = 300
+# GitHub-раннеры живут в UTC, а datetime.now() брал локальное время контейнера.
+# Смещение (часто +0 для раннера и не-0 для браузера/лога) ломало сравнение
+# сроков — код «истёк» мгновенно. Единая временная база для всего проекта: UTC.
+TZ_OFFSET_HOURS = int(os.environ.get('VPS_TZ_OFFSET', '0'))
+
+
+def now_dt():
+    """Текущее время в единой шкале (UTC + смещение)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=TZ_OFFSET_HOURS)
+
+
+CODE_EXPIRE_MINUTES = int(os.environ.get('VPS_CODE_TTL_MIN', '15'))   # время жизни неиспользованного кода
+SESSION_TTL_HOURS = int(os.environ.get('VPS_SESSION_TTL_H', '6'))     # длительность доступа после активации
+CLEANUP_INTERVAL = 60                                                 # чаще чистим устаревшие стримы/сессии
+COMMAND_TIMEOUT = int(os.environ.get('VPS_CMD_TIMEOUT', '120'))       # макс. время одной команды в терминале
+STREAM_TTL = 120                                                      # жизнь буфера вывода стрима без клиента
 
 os.makedirs(SAVES_DIR, exist_ok=True)
 
@@ -56,7 +74,22 @@ FILE_ROOT = os.path.abspath(os.environ.get("VPS_FILE_ROOT", os.getcwd()))
 
 
 def now_iso():
-    return datetime.now().isoformat()
+    return now_dt().isoformat()
+
+
+def log_step(msg: str):
+    """Пишет msg в stdout и, если мы внутри GitHub Actions, дублирует в
+    $GITHUB_STEP_SUMMARY — так код доступа остаётся виден в логах даже
+    после автоматических перезапусков по расписанию."""
+    print(msg, flush=True)
+    summary = os.environ.get('GITHUB_STEP_SUMMARY', '')
+    if summary:
+        try:
+            with open(summary, 'a') as f:
+                f.write(msg + '\n')
+        except Exception:
+            pass
+
 
 
 # ==================== GIT ====================
@@ -114,6 +147,7 @@ def save_tokens(tokens: dict):
 
 # ==================== СЕССИИ / ДОСТУП ====================
 _lock = threading.Lock()
+STREAMS = {}  # id -> Stream (вывод команд терминала)
 
 try:
     with open(SESSION_FILE) as f:
@@ -133,28 +167,42 @@ def add_code(code: str, ip: str, password: str) -> bool:
             'password': password,
             'token': '',
             'created': now_iso(),
-            'expires': (datetime.now() + timedelta(minutes=CODE_EXPIRE_MINUTES)).isoformat(),
+            'expires': (now_dt() + timedelta(minutes=CODE_EXPIRE_MINUTES)).isoformat(),
             'activated_at': '',
         }
         save_sessions()
-        logger.info(f"Код зарегистрирован: {code}")
+        log_step(f"🔑 КОД ЗАРЕГИСТРИРОВАН: {code} (активен {CODE_EXPIRE_MINUTES} мин, затем выдаётся токен на {SESSION_TTL_HOURS} ч)")
         return True
 
 
+def parse_iso(val: str):
+    """Разбор ISO-даты; если в строке есть смещение — приводим к той же шкале,
+    что и now_dt() (naive UTC + TZ_OFFSET). Иначе старые файлы Saves/ с
+    локальными таймстампами мгновенно казались «истёкшими»."""
+    dt = datetime.fromisoformat(val)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None) + timedelta(hours=TZ_OFFSET_HOURS)
+    return dt
+
+
 def activate_code(code: str):
-    """Активация кода из сайта. Возвращает {token, ip, password} или None."""
+    """Активация кода из сайта. Возвращает {token, ip, password} либо {error}."""
     with _lock:
         data = SESSIONS.get(code)
         if not data:
-            return None
-        if datetime.now() > datetime.fromisoformat(data['expires']):
+            return {'error': 'Код не найден на сервере (not found). Проверь, что Action запущен и URL свежий.'}
+        try:
+            expired = now_dt() > parse_iso(data["expires"])
+        except Exception:
+            expired = False
+        if expired:
             del SESSIONS[code]
             save_sessions()
-            return None
+            return {'error': 'Срок действия кода истёк. Запусти Action «🚀 VPS Web Server» заново — код в логах будет новый.'}
         token = secrets.token_urlsafe(32)
         data['token'] = token
         data['activated_at'] = now_iso()
-        data['expires'] = (datetime.now() + timedelta(hours=SESSION_TTL_HOURS)).isoformat()
+        data['expires'] = (now_dt() + timedelta(hours=SESSION_TTL_HOURS)).isoformat()
         TOKENS[token] = {'sid': code, 'created': now_iso()}
         save_tokens(TOKENS)
         save_sessions()
@@ -169,7 +217,7 @@ def session_by_token(token: str):
     data = SESSIONS.get(tid['sid'])
     if not data or not data.get('token') or data['token'] != token:
         return None
-    if datetime.now() > datetime.fromisoformat(data['expires']):
+    if now_dt() > parse_iso(data["expires"]):
         return None
     return {'sid': tid['sid'], **data}
 
@@ -188,11 +236,16 @@ def revoke_token(token: str) -> bool:
 def cleanup_expired():
     while True:
         time.sleep(CLEANUP_INTERVAL)
+        # Чистим завершённые/брошенные стримы терминала, чтобы не росли в память
+        for sid in list(STREAMS.keys()):
+            st = STREAMS.get(sid)
+            if st and (st.done or time.time() - st.created > STREAM_TTL + COMMAND_TIMEOUT):
+                STREAMS.pop(sid, None)
         with _lock:
             changed = False
             for sid in list(SESSIONS.keys()):
                 try:
-                    if datetime.now() > datetime.fromisoformat(SESSIONS[sid]['expires']):
+                    if now_dt() > parse_iso(SESSIONS[sid]["expires"]):
                         tok = SESSIONS[sid].get('token')
                         if tok and tok in TOKENS:
                             TOKENS.pop(tok)
@@ -241,7 +294,7 @@ def get_stats() -> dict:
         'kernel': run_shell("uname -r"),
         'cores': run_shell("nproc"),
         'ip': public_ip,
-        'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'time': now_dt().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
 
@@ -324,28 +377,106 @@ def move_entry(src: str, dst: str):
 
 # ==================== ТЕРМИНАЛ (стриминг) ====================
 
-def start_stream(command: str, cwd: str):
-    q = queue.Queue()
+class Stream:
+    """Буфер вывода команды с историей: клиент может подключиться в любой
+    момент и не потерять уже выведенный текст (в отличие от голой Queue)."""
+
+    def __init__(self, sid: str):
+        self.id = sid
+        self.items = []          # [(kind, text), ...]
+        self.done = False
+        self.created = time.time()
+        self.cond = threading.Condition()
+
+    def put(self, kind: str, text: str):
+        with self.cond:
+            self.items.append((kind, text))
+            if kind == 'done':
+                self.done = True
+            self.cond.notify_all()
+
+    def wait_items(self, idx: int, timeout: float):
+        """(items[idx:], done) — ждёт данные до timeout; (None, done) по таймауту."""
+        deadline = time.time() + timeout
+        with self.cond:
+            while len(self.items) <= idx and not self.done:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return None, self.done
+                self.cond.wait(remaining)
+            chunk = self.items[idx:]
+            return (chunk or None), self.done
+
+    def count(self):
+        with self.cond:
+            return len(self.items)
+
+
+def start_stream(command: str, cwd: str) -> Stream:
+    st = Stream(secrets.token_hex(8))
 
     def worker():
+
+        master_fd = None
         try:
-            proc = subprocess.Popen(
-                command, shell=True, cwd=cwd,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                bufsize=0
-            )
-            for raw in iter(proc.stdout.readline, b''):
-                q.put(('out', raw.decode('utf-8', errors='replace')))
-            code = proc.wait()
-            q.put(('exit', str(code)))
+            # PTY вместо pipe: программы видят интерактивный терминал и
+            # пишут вывод без буферизации (топ, python -c, скрипты), а
+            # stderr идёт общим потоком — раньше команды «не выполнялись»,
+            # потому что вывод молча пропадал в буфере.
+            pid, master_fd = pty.fork()
+            if pid == 0:  # дочерний процесс
+                try:
+                    os.chdir(cwd)
+                    env = dict(os.environ)
+                    env['TERM'] = 'xterm'
+                    env['LANG'] = env.get('LANG', 'C.UTF-8')
+                    os.execvpe('/bin/bash', ['/bin/bash', '-c', command], env)
+                except Exception:
+                    os._exit(127)
+
+            deadline = time.time() + COMMAND_TIMEOUT
+            while True:
+                try:
+                    r, _, _ = select.select([master_fd], [], [], 1.0)
+                except (OSError, ValueError):
+                    break
+                if master_fd in r:
+                    try:
+                        data = os.read(master_fd, 65536)
+                    except OSError as e:
+                        if e.errno == errno.EIO:
+                            break
+                        raise
+                    if not data:
+                        break
+                    st.put('out', data.decode('utf-8', errors='replace'))
+                else:
+                    if time.time() > deadline:
+                        st.put('err', f'\n⏱ Команда прервана: превышено {COMMAND_TIMEOUT} сек\n')
+                        try:
+                            os.killpg(pid, signal.SIGKILL)
+                        except Exception:
+                            pass
+                        break
+            try:
+                _, status = os.waitpid(pid, 0)
+                code = os.waitstatus_to_exitcode(status) if hasattr(os, 'waitstatus_to_exitcode') else -1
+            except ChildProcessError:
+                code = 0
+            st.put('exit', str(code))
         except Exception as e:
-            q.put(('err', str(e)))
-            q.put(('exit', '-1'))
+            st.put('err', str(e))
+            st.put('exit', '-1')
         finally:
-            q.put(('done', ''))
+            if master_fd is not None:
+                try:
+                    os.close(master_fd)
+                except OSError:
+                    pass
+            st.put('done', '')
 
     threading.Thread(target=worker, daemon=True).start()
-    return q
+    return st
 
 
 # ==================== HTTP HANDLER ====================
@@ -481,27 +612,31 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == '/api/stream':
             stream_id = qs.get('id', [''])[0]
-            q = STREAMS.get(stream_id)
-            if q is None:
+            st = STREAMS.get(stream_id)
+            if st is None:
                 return self._json({'error': 'stream not found'}, 404)
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
             self.send_header('Cache-Control', 'no-cache')
             self.send_header('Connection', 'keep-alive')
             self.end_headers()
+            idx = 0
             try:
                 while True:
-                    try:
-                        kind, text = q.get(timeout=20)
-                    except queue.Empty:
-                        self.wfile.write(b": ping\n\n")
-                        continue
-                    payload = json.dumps({'type': kind, 'text': text}, ensure_ascii=False)
-                    self.wfile.write(f"data: {payload}\n\n".encode('utf-8'))
-                    if kind == 'done':
+                    chunk, done = st.wait_items(idx, timeout=15)
+                    if chunk:
+                        for kind, text in chunk:
+                            payload = json.dumps({'type': kind, 'text': text}, ensure_ascii=False)
+                            self.wfile.write(f"data: {payload}\n\n".encode('utf-8'))
+                        self.wfile.flush()
+                        idx += len(chunk)
+                    if done and idx >= st.count():
                         STREAMS.pop(stream_id, None)
                         break
-            except (BrokenPipeError, ConnectionResetError):
+                    if not chunk:
+                        self.wfile.write(b": ping\n\n")
+                        self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             return
 
@@ -516,8 +651,8 @@ class Handler(BaseHTTPRequestHandler):
             if not code:
                 return self._json({'error': 'Введите код доступа'}, 400)
             result = activate_code(code)
-            if not result:
-                return self._json({'error': 'Неверный или просроченный код'}, 401)
+            if 'error' in result:
+                return self._json(result, 401)
             return self._json(result)
 
         sess = self._session()
@@ -577,14 +712,13 @@ class Handler(BaseHTTPRequestHandler):
             command = (body.get('command') or '').strip()
             if not command:
                 return self._json({'error': 'Пустая команда'}, 400)
-            stream_id = secrets.token_hex(8)
-            STREAMS[stream_id] = start_stream(command, FILE_ROOT)
-            return self._json({'id': stream_id})
+            st = start_stream(command, FILE_ROOT)
+            STREAMS[st.id] = st
+            return self._json({'id': st.id})
 
         self._json({'error': 'Not found'}, 404)
 
 
-STREAMS = {}
 
 
 # ==================== ЗАПУСК ====================
@@ -613,6 +747,29 @@ def main():
     logger.info(f"📁 Корень файлов: {FILE_ROOT}")
     logger.info(f"💾 Данные: {SAVES_DIR}")
     logger.info("=" * 50)
+
+    # Актуальные данные доступа — в логи Action при КАЖДОМ запуске
+    # (включая перезапуск keep-alive workflow с новым кодом).
+    tunnel_url = ''
+    try:
+        with open(os.path.join(BASE_DIR, 'tunnel.log')) as f:
+            import re as _re
+            m = _re.search(r'https://[a-z0-9-]+\.trycloudflare\.com', f.read())
+            if m:
+                tunnel_url = m.group(0)
+    except Exception:
+        pass
+    lines = ['', '=' * 50, '🔑 АКТУАЛЬНЫЕ ДАННЫЕ ПАНЕЛИ:']
+    if tunnel_url:
+        lines.append(f'   🌍 САЙТ: {tunnel_url}')
+    for sid, sdata in list(SESSIONS.items()):
+        st = 'активен до ' + sdata.get('expires', '?') if sdata.get('token') else 'ждёт активации'
+        lines.append(f'   🔑 КОД: {sid}  ({st})')
+    if not SESSIONS:
+        lines.append('   ⚠️ Нет активных кодов — запусти «🚀 VPS Web Server» или «🔄 VPS Keep-Alive»')
+    lines.append('=' * 50)
+    log_step('\n'.join(lines))
+
     httpd.serve_forever()
 
 
