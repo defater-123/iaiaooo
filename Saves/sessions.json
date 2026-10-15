@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "0C99A551": {
-      "ip": "51.8.121.163",
-      "password": "AlIIQJlkDw1cOWkeSvHP",
-      "token": "",
-      "created": "2026-10-15T15:21:14.763155",
-      "expires": "2026-10-15T15:31:14.763165",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
