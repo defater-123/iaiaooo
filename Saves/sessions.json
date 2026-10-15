@@ -2239,14 +2239,6 @@
       "user_id": 0,
       "created": "2026-10-14T23:31:20.941405",
       "expires": "2026-10-14T23:41:20.941395"
-    },
-    "TESTAB12": {
-      "ip": "1.2.3.4",
-      "password": "mypass123",
-      "token": "aGKNrfY6Qu0IXHzZN2a5FDJwRVtc87Iuj1xo8-5jBQE",
-      "created": "2026-10-15T04:28:58.365247",
-      "expires": "2026-10-15T10:28:59.408103",
-      "activated_at": "2026-10-15T04:28:59.408094"
     }
   }
 }
