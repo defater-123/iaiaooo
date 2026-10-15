@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# Логи
+web.log
+tunnel.log
+cloudflared
+
+# Секреты панели не коммитим в раннер-логах (Saves/ синхронизируется намеренно)
