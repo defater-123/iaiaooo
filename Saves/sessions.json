@@ -2243,10 +2243,10 @@
     "TESTAB12": {
       "ip": "1.2.3.4",
       "password": "mypass123",
-      "token": "",
+      "token": "aGKNrfY6Qu0IXHzZN2a5FDJwRVtc87Iuj1xo8-5jBQE",
       "created": "2026-10-15T04:28:58.365247",
-      "expires": "2026-10-15T04:38:58.365259",
-      "activated_at": ""
+      "expires": "2026-10-15T10:28:59.408103",
+      "activated_at": "2026-10-15T04:28:59.408094"
     }
   }
 }
