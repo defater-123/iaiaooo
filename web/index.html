@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VPS Manager — управление сервером</title>
+    <meta name="description" content="Веб-панель управления VPS через GitHub Actions. Без Telegram бота.">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖥️</text></svg>">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- ЭКРАН АВТОРИЗАЦИИ (ввод кода из GitHub Actions)              -->
+<!-- ============================================================ -->
+<div class="auth-screen" id="authScreen">
+    <div class="auth-card">
+        <div class="auth-logo"><i class="fas fa-server"></i></div>
+        <h1>VPS Manager</h1>
+        <p class="subtitle">Управление вашим сервером прямо из браузера.<br>Введите код доступа, чтобы продолжить.</p>
+
+        <input type="text" class="code-input" id="codeInput" placeholder="КОД" maxlength="8" autocomplete="off" spellcheck="false">
+        <button class="btn primary block" id="activateBtn">
+            <i class="fas fa-right-to-bracket"></i> Активировать доступ
+        </button>
+        <div class="auth-error" id="authError"></div>
+
+        <div class="howto">
+            <b>Как получить код:</b><br>
+            1. Открой вкладку <b>Actions</b> в GitHub-репозитории<br>
+            2. Запусти workflow <code>🚀 VPS Web Server</code><br>
+            3. Открой лог и скопируй строку <code>КОД ДОСТУПА: XXXXXXXX</code><br>
+            4. Вставь код выше — и панель откроется ✨
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- ОСНОВНОЙ ИНТЕРФЕЙС                                           -->
+<!-- ============================================================ -->
+<div class="app" id="app">
+
+    <!-- Шапка -->
+    <header class="header">
+        <div class="brand">
+            <div class="logo"><i class="fas fa-server"></i></div>
+            <div>
+                <div class="title">VPS Manager</div>
+                <div class="sub" id="hostLabel">GitHub Actions Runner</div>
+            </div>
+        </div>
+
+        <span class="status-pill" id="statusPill">
+            <span class="dot"></span><span id="statusText">онлайн</span>
+        </span>
+
+        <div class="spacer"></div>
+
+        <span class="timer-chip" id="timerChip" title="До конца доступа">
+            <i class="far fa-clock"></i> <span id="timerText">--:--</span>
+        </span>
+        <span class="ip-chip" id="ipChip" title="Скопировать IP">
+            <i class="fas fa-globe"></i> <span id="ipText">—</span>
+        </span>
+        <button class="btn danger" id="revokeBtn" title="Отозвать доступ">
+            <i class="fas fa-user-slash"></i>
+        </button>
+    </header>
+
+    <!-- Навигация -->
+    <nav class="nav">
+        <button class="nav-btn active" data-page="dashboard"><i class="fas fa-gauge-high"></i> Дашборд</button>
+        <button class="nav-btn" data-page="files"><i class="fas fa-folder-tree"></i> Файлы</button>
+        <button class="nav-btn" data-page="terminal"><i class="fas fa-terminal"></i> Терминал</button>
+    </nav>
+
+    <!-- Контент -->
+    <main class="content">
+
+        <!-- ============ ДАШБОРД ============ -->
+        <section class="page active" id="page-dashboard">
+            <div class="grid cols-4">
+                <div class="metric">
+                    <div class="label"><i class="fas fa-microchip"></i> CPU</div>
+                    <div class="value" id="mCpu">—</div>
+                    <div class="bar"><div class="cpu-fill" id="cpuBar" style="width:0%"></div></div>
+                    <div class="hint" id="coresHint">ядер: —</div>
+                </div>
+                <div class="metric">
+                    <div class="label"><i class="fas fa-memory"></i> Память</div>
+                    <div class="value" id="mRam">—</div>
+                    <div class="bar"><div class="ram-fill" id="ramBar" style="width:0%"></div></div>
+                    <div class="hint" id="ramHint">из — МБ</div>
+                </div>
+                <div class="metric">
+                    <div class="label"><i class="fas fa-hard-drive"></i> Диск</div>
+                    <div class="value" id="mDisk">—</div>
+                    <div class="bar"><div class="disk-fill" id="diskBar" style="width:0%"></div></div>
+                    <div class="hint" id="diskHint">— / —</div>
+                </div>
+                <div class="metric">
+                    <div class="label"><i class="fas fa-stopwatch"></i> Uptime</div>
+                    <div class="value" id="mUptime">—</div>
+                    <div class="bar"><div class="cpu-fill" style="width:100%"></div></div>
+                    <div class="hint" id="timeHint">—</div>
+                </div>
+            </div>
+
+            <div class="grid cols-2" style="margin-top:14px">
+                <div class="card">
+                    <div class="card-title"><i class="fas fa-circle-info" style="color:var(--accent)"></i> Информация о сервере</div>
+                    <div class="card-body">
+                        <ul class="info-list">
+                            <li><span class="k">ОС</span><span class="v" id="iOs">—</span></li>
+                            <li><span class="k">Ядро</span><span class="v mono" id="iKernel">—</span></li>
+                            <li><span class="k">Хостнейм</span><span class="v mono" id="iHost">—</span></li>
+                            <li><span class="k">Публичный IP</span><span class="v mono" id="iIp">—</span></li>
+                            <li><span class="k">Текущее время</span><span class="v" id="iTime">—</span></li>
+                            <li><span class="k">Доступ до</span><span class="v" id="iExpires">—</span></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title"><i class="fas fa-key" style="color:var(--success)"></i> Данные для SSH</div>
+                    <div class="card-body">
+                        <ul class="info-list">
+                            <li><span class="k">IP-адрес</span><span class="v mono" id="sIp">—</span></li>
+                            <li><span class="k">Пользователь</span><span class="v mono">runner</span></li>
+                            <li><span class="k">Пароль</span><span class="v mono" id="sPass">—</span></li>
+                        </ul>
+                        <div class="ssh-box">
+                            <span id="sshCmd">ssh runner@—</span>
+                            <button class="copy-btn" onclick="copyText(document.getElementById('sshCmd').textContent)">
+                                <i class="far fa-copy"></i> копировать
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============ ФАЙЛЫ ============ -->
+        <section class="page" id="page-files">
+            <div class="card">
+                <div class="files-toolbar">
+                    <div class="crumbs" id="crumbs"><i class="fas fa-house"></i> /</div>
+                    <button class="tool-btn" onclick="goUp()"><i class="fas fa-arrow-up"></i> Наверх</button>
+                    <button class="tool-btn" onclick="showNewModal('dir')"><i class="fas fa-folder-plus"></i> Папка</button>
+                    <button class="tool-btn" onclick="showNewModal('file')"><i class="fas fa-file-circle-plus"></i> Файл</button>
+                    <button class="tool-btn upload" onclick="document.getElementById('uploadInput').click()">
+                        <i class="fas fa-upload"></i> Загрузить
+                    </button>
+                    <input type="file" id="uploadInput" hidden multiple>
+                    <button class="tool-btn" onclick="loadFiles()"><i class="fas fa-rotate"></i></button>
+                </div>
+                <table class="file-table">
+                    <thead>
+                        <tr>
+                            <th style="width:45%">Имя</th>
+                            <th>Размер</th>
+                            <th class="d-hide">Изменён</th>
+                            <th class="d-hide">Права</th>
+                            <th style="text-align:right">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fileRows">
+                        <tr><td colspan="5"><div class="empty-state"><div class="big">⏳</div>Загрузка…</div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ============ ТЕРМИНАЛ ============ -->
+        <section class="page" id="page-terminal">
+            <div class="terminal">
+                <div class="terminal-head">
+                    <div class="term-dots"><span></span><span></span><span></span></div>
+                    <div class="t-title" id="termTitle">runner@vps — bash</div>
+                    <span class="running-badge" id="runBadge"><i class="fas fa-spinner spinner"></i> выполняется…</span>
+                    <button class="copy-btn" onclick="clearTerminal()" title="Очистить"><i class="fas fa-eraser"></i> clear</button>
+                </div>
+                <div class="terminal-output" id="termOut"></div>
+                <div class="terminal-input-row">
+                    <span class="p">$</span>
+                    <input type="text" id="termIn" placeholder="введите команду и нажмите Enter…" autocomplete="off" spellcheck="false">
+                    <button class="copy-btn" onclick="sendCommand()">Выполнить <i class="fas fa-arrow-right"></i></button>
+                </div>
+            </div>
+        </section>
+    </main>
+</div>
+
+<!-- ============ МОДАЛКА: новый файл/папка ============ -->
+<div class="modal-overlay" id="newModal">
+    <div class="modal">
+        <div class="modal-head">
+            <span id="newModalTitle">Новый файл</span>
+            <button onclick="closeModal('newModal')">✕</button>
+        </div>
+        <div class="modal-body field">
+            <label>Имя</label>
+            <input type="text" id="newName" placeholder="например: script.sh" autocomplete="off">
+        </div>
+        <div class="modal-foot">
+            <button class="btn" onclick="closeModal('newModal')">Отмена</button>
+            <button class="btn primary" onclick="createEntry()"><i class="fas fa-check"></i> Создать</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============ МОДАЛКА: редактор файлов ============ -->
+<div class="modal-overlay" id="editorModal">
+    <div class="modal wide">
+        <div class="modal-head">
+            <span><i class="fas fa-pen"></i> Редактор — <span id="editorName"></span></span>
+            <button onclick="closeModal('editorModal')">✕</button>
+        </div>
+        <div class="modal-body">
+            <textarea class="editor-area" id="editorArea" spellcheck="false"></textarea>
+        </div>
+        <div class="modal-foot">
+            <button class="btn" onclick="closeModal('editorModal')">Отмена</button>
+            <button class="btn primary" onclick="saveFile()"><i class="fas fa-floppy-disk"></i> Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
