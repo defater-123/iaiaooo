@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "30593044": {
+      "ip": "40.65.61.39",
+      "password": "ySEy5PmUYuUWhXS1pyf3",
+      "token": "",
+      "created": "2026-10-15T19:28:57.092674",
+      "expires": "2026-10-15T19:38:57.092681",
+      "activated_at": ""
+    }
+  }
 }
