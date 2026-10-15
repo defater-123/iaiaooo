@@ -88,18 +88,19 @@ async function activate() {
     }
     token = res.token;
     localStorage.setItem(TOKEN_KEY, token);
-    enterApp(res.ip, res.password);
+    enterApp(res.ip, res.password, res.expires);
 }
 
-function logout() {
+function logout(msg) {
     token = '';
     localStorage.removeItem(TOKEN_KEY);
     clearInterval(statsTimer);
     $('app').classList.remove('active');
     $('authScreen').classList.remove('hidden');
+    if (msg) $('authError').textContent = msg;
 }
 
-async function enterApp(ip, password) {
+async function enterApp(ip, password, expires) {
     $('authScreen').classList.add('hidden');
     $('app').classList.add('active');
 
@@ -109,6 +110,7 @@ async function enterApp(ip, password) {
         $('sshCmd').textContent = 'ssh runner@' + ip;
     }
     if (password) $('sPass').textContent = password;
+    if (expires) setExpiry(expires);
 
     loadStats();
     loadSessionInfo();
@@ -116,16 +118,30 @@ async function enterApp(ip, password) {
     welcomeTerminal();
 }
 
+function setExpiresFromServer(expires) {
+    if (expires) setExpiry(expires);
+}
+
+function setExpiry(iso) {
+    // Разбираем ISO с часовым поясом — иначе браузер считает время локальным и таймер «истёк» врёт
+    let d = new Date(iso);
+    if (!iso.includes('+') && !iso.endsWith('Z')) {
+        d = new Date(iso + '+00:00'); // серверные времена без offset трактуем как UTC
+    }
+    expiresAt = d;
+    const el = $('iExpires');
+    if (el) el.textContent = d.toLocaleString('ru-RU');
+    tickTimer();
+}
+
 async function loadSessionInfo() {
     const s = await api('session');
     if (!s.trusted) return;
-    expiresAt = new Date(s.expires);
+    setExpiry(s.expires);
     $('ipText').textContent = s.ip;
     $('sIp').textContent = s.ip;
     $('sPass').textContent = s.password;
     $('sshCmd').textContent = s.ssh;
-    $('iExpires').textContent = expiresAt.toLocaleString('ru-RU');
-    tickTimer();
 }
 
 function tickTimer() {
@@ -173,6 +189,7 @@ async function loadStats() {
 
     $('mUptime').textContent = fmtUptime(st.uptime_min);
     $('timeHint').textContent = st.time || '—';
+    if (st.expires) setExpiry(st.expires);
 
     $('iOs').textContent = st.os || '—';
     $('iKernel').textContent = st.kernel || '—';
@@ -198,6 +215,13 @@ async function loadFiles() {
 
     const res = await api('files?path=' + encodeURIComponent(currentPath));
     if (res.error) {
+        // Путь мог исчезнуть (папку удалили/переименовали) — поднимаемся к корню
+        if (currentPath !== '.') {
+            toast('Папка недоступна: ' + res.error, 'error');
+            currentPath = '.';
+            renderCrumbs();
+            return loadFiles();
+        }
         rows.innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="big">🚫</div>${esc(res.error)}</div></td></tr>`;
         return;
     }
@@ -212,13 +236,15 @@ async function loadFiles() {
         const icon = fileIcon(f);
         const actions = f.is_dir
             ? `<button class="icon-btn del" title="Удалить папку" onclick="event.stopPropagation(); removeEntry('${escAttr(full)}')"><i class="fas fa-trash"></i></button>`
-            : `<button class="icon-btn" title="Редактировать" onclick="editFile('${escAttr(full)}')"><i class="fas fa-pen"></i></button>
-               <button class="icon-btn" title="Скачать" onclick="downloadFile('${escAttr(full)}')"><i class="fas fa-download"></i></button>
-               <button class="icon-btn del" title="Удалить" onclick="removeEntry('${escAttr(full)}')"><i class="fas fa-trash"></i></button>`;
+            : `<button class="icon-btn" title="Открыть / редактировать" onclick="event.stopPropagation(); editFile('${escAttr(full)}')"><i class="fas fa-pen"></i></button>
+               <button class="icon-btn" title="Скачать" onclick="event.stopPropagation(); downloadFile('${escAttr(full)}')"><i class="fas fa-download"></i></button>
+               <button class="icon-btn del" title="Удалить" onclick="event.stopPropagation(); removeEntry('${escAttr(full)}')"><i class="fas fa-trash"></i></button>`;
+        const openFn = f.is_dir ? `openDir('${escAttr(f.name)}')` : `editFile('${escAttr(full)}')`;
         return `
-        <tr class="${f.is_dir ? 'folder-row' : ''}" ${f.is_dir ? `ondblclick="openDir('${escAttr(f.name)}')" onclick="openDir('${escAttr(f.name)}')` : `ondblclick="editFile('${escAttr(full)}')"`}>
+        <tr class="${f.is_dir ? 'folder-row' : 'file-row'}" style="cursor:pointer"
+            onclick="${openFn}" ondblclick="${openFn}" title="${f.is_dir ? 'Открыть папку' : 'Открыть файл'}">
             <td><div class="f-name"><span class="f-icon ${icon.cls}">${icon.html}</span>${esc(f.name)}</div></td>
-            <td class="f-size">${f.is_dir ? '—' : fmtSize(f.size)}</td>
+            <td class="f-size">${f.is_dir ? 'папка' : fmtSize(f.size)}</td>
             <td class="f-date d-hide">${esc(f.modified)}</td>
             <td class="f-perms d-hide">${esc(f.permissions)}</td>
             <td><div class="f-actions">${actions}</div></td>
@@ -226,8 +252,12 @@ async function loadFiles() {
     }).join('');
 }
 
+
 function escAttr(s) {
-    return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    s = String(s == null ? '' : s);
+    // Экранирование для одинарных кавычек внутри onclick="...('...')"
+    return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+             .replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function fileIcon(f) {
@@ -296,6 +326,8 @@ async function editFile(path) {
     editorPath = path;
     $('editorName').textContent = res.name;
     $('editorArea').value = res.content;
+    $('editorArea').readOnly = !!res.binary;
+    $('saveBtn').disabled = !!res.binary;
     $('editorModal').classList.add('open');
 }
 
@@ -306,9 +338,7 @@ async function saveFile() {
 }
 
 function downloadFile(path) {
-    const a = document.createElement('a');
-    a.href = '/api/download?path=' + encodeURIComponent(path) + '&token=' + encodeURIComponent(token);
-    // токен через query не поддерживаем — используем fetch + blob
+    // скачивание через fetch + blob (токен в заголовке Authorization)
     fetch('/api/download?path=' + encodeURIComponent(path), {
         headers: { 'Authorization': 'Bearer ' + token }
     }).then(r => r.blob()).then(blob => {
@@ -350,14 +380,19 @@ function termLine(html, cls = '') {
     return span;
 }
 
+function stripAnsi(s) {
+    // PTY может присылать ANSI-последовательности — чистим их для читаемости
+    return s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r/g, '');
+}
+
 function welcomeTerminal() {
     if ($('termOut').dataset.welcomed) return;
     $('termOut').dataset.welcomed = '1';
     termLine('<span class="dim">VPS Manager Terminal. Все команды выполняются на сервере-раннере.</span>');
-    termLine('<span class="prompt">$</span> <span class="cmd">whoami</span>');
-    termLine('runner', 'out');
-    termLine('<span class="dim">Подсказка: ls, cd, top, df -h, free -h, python3 …</span>');
+    termLine('<span class="dim">Подсказка: ls, pwd, cat файл, top, df -h, free -h, python3 …</span>');
 }
+
+let currentES = null;
 
 async function sendCommand() {
     const input = $('termIn');
@@ -369,6 +404,8 @@ async function sendCommand() {
 
     if (cmd === 'clear') { $('termOut').innerHTML = ''; $('termOut').dataset.welcomed = ''; return; }
 
+    if (currentES) { try { currentES.close(); } catch (e) {} currentES = null; }
+
     termLine(`<span class="prompt">$</span> <span class="cmd">${esc(cmd)}</span>`);
     $('runBadge').classList.add('show');
 
@@ -379,8 +416,9 @@ async function sendCommand() {
         return;
     }
 
-    // Стримим вывод через EventSource
-    const es = new EventSource('/api/stream?id=' + res.id + '&auth=' + encodeURIComponent(token));
+    // Стримим вывод через EventSource (сервер отдаёт всю историю + новые данные)
+    const es = new EventSource('/api/stream?id=' + encodeURIComponent(res.id) + '&auth=' + encodeURIComponent(token));
+    currentES = es;
     const line = termLine('', 'out');
     let buffer = '';
     let exitCode = null;
@@ -388,24 +426,29 @@ async function sendCommand() {
     es.onmessage = (ev) => {
         const msg = JSON.parse(ev.data);
         if (msg.type === 'out') {
-            buffer += msg.text;
+            buffer += stripAnsi(msg.text);
             line.textContent = buffer;
             $('termOut').scrollTop = $('termOut').scrollHeight;
         } else if (msg.type === 'err') {
-            termLine(esc(msg.text), 'err');
+            termLine(esc(stripAnsi(msg.text)), 'err');
         } else if (msg.type === 'exit') {
             exitCode = msg.text;
         } else if (msg.type === 'done') {
             es.close();
+            if (currentES === es) currentES = null;
             $('runBadge').classList.remove('show');
             if (exitCode !== null && exitCode !== '0') {
-                termLine(`process exited with code ${exitCode}`, 'err');
+                termLine(`процесс завершён, код выхода: ${exitCode}`, 'err');
             } else if (!buffer.trim()) {
-                termLine('(no output)', 'dim');
+                termLine('(нет вывода)', 'dim');
             }
         }
     };
-    es.onerror = () => { es.close(); $('runBadge').classList.remove('show'); };
+    es.onerror = () => {
+        es.close();
+        if (currentES === es) currentES = null;
+        $('runBadge').classList.remove('show');
+    };
 }
 
 $('termIn') && document.addEventListener('keydown', (e) => {

@@ -98,5 +98,56 @@ jobs:
             echo "✅ Изменения сохранены в репозиторий"
           fi
 
-      - name: Keep alive
-        run: sleep 21000
+      - name: Keep alive (следим за сервером и туннелем)
+        run: |
+          echo "🔄 Хранитель активен: панель будет держать сервер живым ~5.5 часов."
+          echo ""
+          echo "⚠️  ВАЖНО: код доступа живёт 15 минут после запуска Action."
+          echo "   Если видите «истёк» — откройте этот лог заново (страница Action"
+          echo "   обновляется на лету): ниже каждые ~5 минут печатается актуальный"
+          echo "   статус, а при перезапуске панели генерируется НОВЫЙ код."
+          echo ""
+          END_TIME=$(( $(date +%s) + 20400 ))
+          LAST_REPORT=0
+          while [ "$(date +%s)" -lt "$END_TIME" ]; do
+            sleep 60
+
+            # Пуш сохранённых данных (файлы, сессии) в репозиторий
+            git add Saves/ web.log 2>/dev/null || true
+            if ! git diff --staged --quiet 2>/dev/null; then
+              git commit -m "Автосохранение [skip ci]" >/dev/null 2>&1 || true
+              git push >/dev/null 2>&1 || true
+            fi
+
+            # Проверка живости веб-сервера
+            if ! curl -sf http://localhost:8080/api/config >/dev/null 2>&1; then
+              echo "🔁 Сервер не отвечает — перезапускаю..."
+              nohup python3 web/server.py --port 8080 >> web.log 2>&1 &
+              sleep 3
+              # Регистрируем НОВЫЙ код, чтобы доступ можно было получить заново
+              NEW_CODE=$(openssl rand -hex 4 | tr 'a-f' 'A-F')
+              python3 web/server.py --add-code "$NEW_CODE:$SERVER_IP:$SSH_PASSWORD" || true
+              echo "🌍 САЙТ: $TUNNEL_URL"
+              echo "🔑 НОВЫЙ КОД ДОСТУПА: $NEW_CODE (живёт 15 минут)"
+              echo "$NEW_CODE" > /tmp/vps_new_code
+              # Проверяем туннель
+              if ! pgrep -f cloudflared >/dev/null 2>&1; then
+                nohup ./cloudflared tunnel --url http://localhost:8080 >> tunnel.log 2>&1 &
+                sleep 8
+                NEW_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | tail -1)
+                [ -n "$NEW_URL" ] && TUNNEL_URL="$NEW_URL" && echo "🌍 Новый URL туннеля: $TUNNEL_URL"
+              fi
+            fi
+
+            # Каждые ~5 минут — напоминание с актуальными кодами в лог
+            NOW=$(date +%s)
+            if [ $(( NOW - LAST_REPORT )) -ge 300 ]; then
+              LAST_REPORT=$NOW
+              echo "────────── 📊 Статус панели ──────────"
+              echo "🌍 САЙТ: $TUNNEL_URL"
+              [ -f /tmp/vps_new_code ] && echo "🔑 ПОСЛЕДНИЙ КОД: $(cat /tmp/vps_new_code)"
+              python3 web/server.py --print-codes 2>/dev/null | grep "КОД ДОСТУПА" || echo "🔑 Все коды использованы или истекли (это нормально для активной сессии)"
+              echo "⏱ Время сервера: $(python3 -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))')"
+              echo "──────────────────────────────────────"
+            fi
+          done

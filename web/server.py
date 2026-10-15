@@ -16,19 +16,23 @@ VPS Manager — веб-сервер для управления сервером
 
 import argparse
 import base64
+import errno
 import json
 import logging
 import mimetypes
 import os
+import pty
 import posixpath
-import queue
 import secrets
+import select
 import shutil
+import signal
 import string
 import subprocess
+import sys
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
@@ -45,9 +49,13 @@ SAVES_DIR = os.path.join(BASE_DIR, "Saves")
 SESSION_FILE = os.path.join(SAVES_DIR, "sessions.json")
 TOKENS_FILE = os.path.join(SAVES_DIR, "tokens.json")
 
-CODE_EXPIRE_MINUTES = 10          # время жизни неиспользованного кода
-SESSION_TTL_HOURS = 6             # длительность доступа после активации
+CODE_EXPIRE_MINUTES = int(os.environ.get("VPS_CODE_TTL_MIN", 15))   # время жизни неиспользованного кода
+SESSION_TTL_HOURS = int(os.environ.get("VPS_SESSION_TTL_H", 6))     # длительность доступа после активации
 CLEANUP_INTERVAL = 300
+# Часовой пояс для отображения дат (GitHub-раннеры живут в UTC, из-за чего
+# локальные времена расходились и доступ «истёк» раньше срока)
+TZ_OFFSET_H = float(os.environ.get("VPS_TZ_OFFSET", 0))
+TZINFO = timezone(timedelta(hours=TZ_OFFSET_H))
 
 os.makedirs(SAVES_DIR, exist_ok=True)
 
@@ -55,8 +63,24 @@ os.makedirs(SAVES_DIR, exist_ok=True)
 FILE_ROOT = os.path.abspath(os.environ.get("VPS_FILE_ROOT", os.getcwd()))
 
 
+def now_dt():
+    """Единая временная база сервера (UTC + настраиваемое смещение)."""
+    return datetime.now(timezone.utc).astimezone(TZINFO)
+
+
 def now_iso():
-    return datetime.now().isoformat()
+    return now_dt().isoformat()
+
+
+def parse_iso(value: str):
+    """Разбирает ISO-время; старые записи без часового пояса трактуем как TZINFO."""
+    try:
+        dt = datetime.fromisoformat(value)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=TZINFO)
+    return dt.astimezone(TZINFO)
 
 
 # ==================== GIT ====================
@@ -133,11 +157,11 @@ def add_code(code: str, ip: str, password: str) -> bool:
             'password': password,
             'token': '',
             'created': now_iso(),
-            'expires': (datetime.now() + timedelta(minutes=CODE_EXPIRE_MINUTES)).isoformat(),
+            'expires': (now_dt() + timedelta(minutes=CODE_EXPIRE_MINUTES)).isoformat(),
             'activated_at': '',
         }
         save_sessions()
-        logger.info(f"Код зарегистрирован: {code}")
+        logger.info(f"Код зарегистрирован: {code} (действует {CODE_EXPIRE_MINUTES} мин)")
         return True
 
 
@@ -146,20 +170,22 @@ def activate_code(code: str):
     with _lock:
         data = SESSIONS.get(code)
         if not data:
-            return None
-        if datetime.now() > datetime.fromisoformat(data['expires']):
+            return None, "Код не найден. Запусти Action «VPS Web Server» заново и возьми новый код из логов."
+        exp = parse_iso(data['expires'])
+        if exp is None or now_dt() > exp:
             del SESSIONS[code]
             save_sessions()
-            return None
+            return None, f"Срок действия кода истёк ({CODE_EXPIRE_MINUTES} мин). Запусти Action заново — код в логах обновился."
         token = secrets.token_urlsafe(32)
         data['token'] = token
         data['activated_at'] = now_iso()
-        data['expires'] = (datetime.now() + timedelta(hours=SESSION_TTL_HOURS)).isoformat()
+        data['expires'] = (now_dt() + timedelta(hours=SESSION_TTL_HOURS)).isoformat()
         TOKENS[token] = {'sid': code, 'created': now_iso()}
         save_tokens(TOKENS)
         save_sessions()
         logger.info(f"Код {code} активирован с сайта")
-        return {'token': token, 'ip': data['ip'], 'password': data['password']}
+        return {'token': token, 'ip': data['ip'], 'password': data['password'],
+                'expires': data['expires']}, None
 
 
 def session_by_token(token: str):
@@ -169,7 +195,8 @@ def session_by_token(token: str):
     data = SESSIONS.get(tid['sid'])
     if not data or not data.get('token') or data['token'] != token:
         return None
-    if datetime.now() > datetime.fromisoformat(data['expires']):
+    exp = parse_iso(data['expires'])
+    if exp is None or now_dt() > exp:
         return None
     return {'sid': tid['sid'], **data}
 
@@ -192,7 +219,8 @@ def cleanup_expired():
             changed = False
             for sid in list(SESSIONS.keys()):
                 try:
-                    if datetime.now() > datetime.fromisoformat(SESSIONS[sid]['expires']):
+                    exp = parse_iso(SESSIONS[sid]['expires'])
+                    if exp is None or now_dt() > exp:
                         tok = SESSIONS[sid].get('token')
                         if tok and tok in TOKENS:
                             TOKENS.pop(tok)
@@ -203,6 +231,16 @@ def cleanup_expired():
             if changed:
                 save_tokens(TOKENS)
                 save_sessions()
+
+
+def print_access_info(url: str = ''):
+    """Печатает актуальные коды доступа в лог (чтобы «истёк» не был сюрпризом)."""
+    with _lock:
+        active = {sid: d for sid, d in SESSIONS.items() if not d.get('token')}
+    for sid, d in active.items():
+        exp = parse_iso(d['expires'])
+        left = int((exp - now_dt()).total_seconds() // 60) if exp else 0
+        logger.info(f"🔑 КОД ДОСТУПА: {sid} | осталось {left} мин" + (f" | сайт: {url}" if url else ''))
 
 
 # ==================== СИСТЕМНАЯ СТАТИСТИКА ====================
@@ -241,44 +279,70 @@ def get_stats() -> dict:
         'kernel': run_shell("uname -r"),
         'cores': run_shell("nproc"),
         'ip': public_ip,
-        'time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'time': now_dt().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
 
 # ==================== ФАЙЛОВАЯ СИСТЕМА ====================
 
+EXCLUDED_DIRS = {'.git'}
+
+
 def safe_path(path: str) -> str:
     """Разрешаем только пути внутри FILE_ROOT (защита от path traversal)."""
     path = unquote(path or '.')
+    # нормализуем обратные слеши и лишние слэши из клиентских путей
+    path = path.replace('\\', '/')
     if not posixpath.isabs(path):
-        path = posixpath.join(FILE_ROOT, path)
-    norm = os.path.normpath(path)
-    if not (norm == FILE_ROOT or norm.startswith(FILE_ROOT + os.sep)):
+        path = posixpath.normpath(posixpath.join(FILE_ROOT, path))
+    norm = os.path.realpath(os.path.normpath(path))
+    root_real = os.path.realpath(FILE_ROOT)
+    if not (norm == root_real or norm.startswith(root_real + os.sep)):
         raise PermissionError("Путь за пределами сервера")
     return norm
 
 
+def rel_to_root(abs_path: str) -> str:
+    """Относительный путь от корня файлов (для «хлебных крошек» клиента)."""
+    r = os.path.relpath(abs_path, os.path.realpath(FILE_ROOT))
+    return '.' if r == '.' else r.replace(os.sep, '/')
+
+
 def list_dir(path: str):
     d = safe_path(path)
+    if not os.path.isdir(d):
+        raise NotADirectoryError("Это не папка: " + d)
     items = []
-    for name in sorted(os.listdir(d), key=lambda n: (not os.path.isdir(os.path.join(d, n)), n.lower())):
+    for name in sorted(os.listdir(d),
+                       key=lambda n: (not os.path.isdir(os.path.join(d, n)), n.lower())):
+        if name in EXCLUDED_DIRS and d == os.path.realpath(FILE_ROOT):
+            continue
         full = os.path.join(d, name)
-        st = os.stat(full)
+        try:
+            st = os.stat(full)
+        except OSError:
+            continue
         items.append({
             'name': name,
             'is_dir': os.path.isdir(full),
             'size': st.st_size,
-            'modified': datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"),
+            'modified': datetime.fromtimestamp(st.st_mtime, TZINFO).strftime("%Y-%m-%d %H:%M"),
             'permissions': oct(st.st_mode)[-3:],
         })
-    return {'path': d, 'files': items}
+    return {'path': rel_to_root(d), 'root': rel_to_root(FILE_ROOT), 'files': items}
 
 
 def read_file(path: str):
     p = safe_path(path)
+    if os.path.isdir(p):
+        raise IsADirectoryError("Нельзя открыть папку как файл")
     with open(p, 'rb') as f:
-        content = f.read(2 * 1024 * 1024)  # до 2 МБ для редактора
-    return {'name': os.path.basename(p), 'content': content.decode('utf-8', errors='replace')}
+        raw = f.read(2 * 1024 * 1024)  # до 2 МБ для редактора
+    if b'\x00' in raw[:8192]:
+        return {'name': os.path.basename(p), 'binary': True,
+                'content': f"(бинарный файл, {len(raw)} байт — используйте скачивание)"}
+    return {'name': os.path.basename(p), 'binary': False,
+            'content': raw.decode('utf-8', errors='replace')}
 
 
 def write_file(path: str, content: str):
@@ -322,30 +386,134 @@ def move_entry(src: str, dst: str):
     return {'success': True}
 
 
-# ==================== ТЕРМИНАЛ (стриминг) ====================
+# ==================== ТЕРМИНАЛ (стриминг через PTY) ====================
 
-def start_stream(command: str, cwd: str):
-    q = queue.Queue()
+class Stream:
+    """Буферизированный стрим вывода команды с историей (можно подключиться в любой момент)."""
+
+    def __init__(self, stream_id: str):
+        self.id = stream_id
+        self.lines = []          # [('out'|'err'|'exit', text), ...]
+        self.done = False
+        self.cond = threading.Condition()
+        self.created = time.time()
+
+    def push(self, kind: str, text: str):
+        with self.cond:
+            self.lines.append((kind, text))
+            self.cond.notify_all()
+
+    def finish(self):
+        with self.cond:
+            self.done = True
+            self.cond.notify_all()
+
+    def wait_events(self, pos: int, timeout: float = 20.0):
+        """Возвращает (events, new_pos, done). pos — индекс следующего события."""
+        with self.cond:
+            if pos >= len(self.lines) and not self.done:
+                self.cond.wait(timeout)
+            events = self.lines[pos:]
+            return events, len(self.lines), self.done
+
+
+STREAMS = {}
+STREAMS_LOCK = threading.Lock()
+COMMAND_TIMEOUT = int(os.environ.get("VPS_CMD_TIMEOUT", 120))
+
+
+def gc_streams():
+    now = time.time()
+    with STREAMS_LOCK:
+        for sid in list(STREAMS.keys()):
+            s = STREAMS[sid]
+            if s.done and now - s.created > 300:
+                STREAMS.pop(sid, None)
+
+
+def start_stream(command: str, cwd: str) -> 'Stream':
+    """Запуск команды в PTY: интерактивный вывод без буферизации, stdout+stderr вместе."""
+    stream = Stream(secrets.token_hex(8))
+    with STREAMS_LOCK:
+        STREAMS[stream.id] = stream
+    gc_streams()
 
     def worker():
+        pid, fd = pty.fork()
+        if pid == 0:  # дочерний процесс
+            try:
+                os.chdir(cwd)
+                env = dict(os.environ)
+                env['TERM'] = 'dumb'
+                os.execvpe('/bin/bash', ['/bin/bash', '-c', command], env)
+            except Exception as e:
+                os._exit(127)
+        # родительский процесс: читаем из PTY до EOF/таймаута
+        deadline = time.time() + COMMAND_TIMEOUT
+        buf = b''
         try:
-            proc = subprocess.Popen(
-                command, shell=True, cwd=cwd,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                bufsize=0
-            )
-            for raw in iter(proc.stdout.readline, b''):
-                q.put(('out', raw.decode('utf-8', errors='replace')))
-            code = proc.wait()
-            q.put(('exit', str(code)))
+            while True:
+                remain = deadline - time.time()
+                if remain <= 0:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except OSError:
+                        pass
+                    stream.push('err', f'\n[команда прервана: превышен таймаут {COMMAND_TIMEOUT} сек]')
+                    break
+                try:
+                    r, _, _ = select.select([fd], [], [], min(remain, 5.0))
+                except OSError:
+                    break
+                if fd in r:
+                    try:
+                        chunk = os.read(fd, 4096)
+                    except OSError as e:
+                        if e.errno == errno.EIO:
+                            break  # PTY закрыт — процесс завершён
+                        raise
+                    if not chunk:
+                        break
+                    buf += chunk
+                    while b'\n' in buf:
+                        line, buf = buf.split(b'\n', 1)
+                        stream.push('out', line.decode('utf-8', errors='replace') + '\n')
+                else:
+                    # проверяем, не завершился ли процесс
+                    try:
+                        done_pid, status = os.waitpid(pid, os.WNOHANG)
+                    except ChildProcessError:
+                        break
+                    if done_pid == pid:
+                        break
+            # дочитываем остаток
+            try:
+                while True:
+                    chunk = os.read(fd, 4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+            except OSError:
+                pass
+            if buf:
+                stream.push('out', buf.decode('utf-8', errors='replace'))
         except Exception as e:
-            q.put(('err', str(e)))
-            q.put(('exit', '-1'))
+            stream.push('err', str(e))
         finally:
-            q.put(('done', ''))
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            try:
+                _, status = os.waitpid(pid, 0)
+                code = os.waitstatus_to_exitcode(status)
+            except Exception:
+                code = -1
+            stream.push('exit', str(code if code is not None else -1))
+            stream.finish()
 
     threading.Thread(target=worker, daemon=True).start()
-    return q
+    return stream
 
 
 # ==================== HTTP HANDLER ====================
@@ -481,26 +649,28 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == '/api/stream':
             stream_id = qs.get('id', [''])[0]
-            q = STREAMS.get(stream_id)
-            if q is None:
+            with STREAMS_LOCK:
+                st = STREAMS.get(stream_id)
+            if st is None:
                 return self._json({'error': 'stream not found'}, 404)
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
             self.send_header('Cache-Control', 'no-cache')
             self.send_header('Connection', 'keep-alive')
             self.end_headers()
+            pos = 0
             try:
                 while True:
-                    try:
-                        kind, text = q.get(timeout=20)
-                    except queue.Empty:
-                        self.wfile.write(b": ping\n\n")
-                        continue
-                    payload = json.dumps({'type': kind, 'text': text}, ensure_ascii=False)
-                    self.wfile.write(f"data: {payload}\n\n".encode('utf-8'))
-                    if kind == 'done':
-                        STREAMS.pop(stream_id, None)
+                    events, pos, done = st.wait_events(pos)
+                    for kind, text in events:
+                        payload = json.dumps({'type': kind, 'text': text}, ensure_ascii=False)
+                        self.wfile.write(f"data: {payload}\n\n".encode('utf-8'))
+                    self.wfile.flush()
+                    if done and pos >= len(st.lines):
+                        self.wfile.write(b"data: {\"type\": \"done\", \"text\": \"\"}\n\n")
                         break
+                    if not events:
+                        self.wfile.write(b": ping\n\n")
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
@@ -515,9 +685,9 @@ class Handler(BaseHTTPRequestHandler):
             code = (body.get('code') or '').strip().upper()
             if not code:
                 return self._json({'error': 'Введите код доступа'}, 400)
-            result = activate_code(code)
-            if not result:
-                return self._json({'error': 'Неверный или просроченный код'}, 401)
+            result, err = activate_code(code)
+            if err:
+                return self._json({'error': err}, 401)
             return self._json(result)
 
         sess = self._session()
@@ -577,14 +747,10 @@ class Handler(BaseHTTPRequestHandler):
             command = (body.get('command') or '').strip()
             if not command:
                 return self._json({'error': 'Пустая команда'}, 400)
-            stream_id = secrets.token_hex(8)
-            STREAMS[stream_id] = start_stream(command, FILE_ROOT)
-            return self._json({'id': stream_id})
+            stream = start_stream(command, FILE_ROOT)
+            return self._json({'id': stream.id})
 
         self._json({'error': 'Not found'}, 404)
-
-
-STREAMS = {}
 
 
 # ==================== ЗАПУСК ====================
@@ -594,7 +760,13 @@ def main():
     parser.add_argument('--port', type=int, default=int(os.environ.get('PORT', 8080)))
     parser.add_argument('--host', default='0.0.0.0')
     parser.add_argument('--add-code', help='Добавить код: CODE:IP:PASSWORD')
+    parser.add_argument('--print-codes', action='store_true',
+                        help='Напечатать активные коды доступа и выйти')
     args = parser.parse_args()
+
+    if args.print_codes:
+        print_access_info()
+        return 0
 
     if args.add_code:
         parts = args.add_code.split(':')
@@ -612,7 +784,9 @@ def main():
     logger.info(f"🌐 VPS Manager запущен: http://{args.host}:{args.port}")
     logger.info(f"📁 Корень файлов: {FILE_ROOT}")
     logger.info(f"💾 Данные: {SAVES_DIR}")
+    logger.info(f"⏱ Время сервера: {now_dt().strftime('%Y-%m-%d %H:%M:%S %Z')}")
     logger.info("=" * 50)
+    print_access_info()
     httpd.serve_forever()
 
 
