@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "F9541199": {
-      "ip": "20.83.53.75",
-      "password": "Mbm5rlaIo9yqbmb43j7",
-      "token": "",
-      "created": "2026-10-16T10:10:08.082409",
-      "expires": "2026-10-16T10:20:08.082419",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
