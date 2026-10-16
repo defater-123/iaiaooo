@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "8CD955DD": {
-      "ip": "68.220.63.8",
-      "password": "4ESgZsVFjNV3akkIiuFP",
-      "token": "",
-      "created": "2026-10-16T15:01:33.147252",
-      "expires": "2026-10-16T15:11:33.147261",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
