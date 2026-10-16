@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "7329426A": {
-      "ip": "48.211.213.37",
-      "password": "jE2xLonLVI5xwZoX1Zbe",
-      "token": "",
-      "created": "2026-10-16T23:04:00.201701",
-      "expires": "2026-10-16T23:14:00.201709",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
