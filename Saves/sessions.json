@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "1CFFD6BB": {
+      "ip": "20.83.175.16",
+      "password": "TqMN5JAiNVzK8gca3leY",
+      "token": "",
+      "created": "2026-10-17T22:42:15.921338",
+      "expires": "2026-10-17T22:52:15.921345",
+      "activated_at": ""
+    }
+  }
 }
