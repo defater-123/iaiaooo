@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "248227D2": {
-      "ip": "135.232.177.112",
-      "password": "wS2TPPcqCdYfSinsjdjK",
-      "token": "",
-      "created": "2026-10-17T09:44:41.942746",
-      "expires": "2026-10-17T09:54:41.942753",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
