@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "8391C474": {
+      "ip": "52.176.38.196",
+      "password": "l3WPaalaxwtoizFUCMx",
+      "token": "",
+      "created": "2026-10-19T11:18:35.823225",
+      "expires": "2026-10-19T11:28:35.823235",
+      "activated_at": ""
+    }
+  }
 }
