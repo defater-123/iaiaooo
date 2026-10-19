@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "32F4434A": {
+      "ip": "134.33.77.212",
+      "password": "ZllcEmwuklmxM3i0PUhA",
+      "token": "",
+      "created": "2026-10-19T05:24:28.045151",
+      "expires": "2026-10-19T05:34:28.045157",
+      "activated_at": ""
+    }
+  }
 }
