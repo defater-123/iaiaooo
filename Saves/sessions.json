@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "7322CB61": {
-      "ip": "4.242.195.150",
-      "password": "wwnXzokMo3ryP6cBz1R",
-      "token": "",
-      "created": "2026-10-20T15:24:18.737584",
-      "expires": "2026-10-20T15:34:18.737590",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
