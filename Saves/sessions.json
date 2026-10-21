@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "F33E8C30": {
+      "ip": "57.154.167.115",
+      "password": "BLOjC8LsMgzJJuGiUAuS",
+      "token": "",
+      "created": "2026-10-21T23:44:27.204188",
+      "expires": "2026-10-21T23:54:27.204195",
+      "activated_at": ""
+    }
+  }
 }
