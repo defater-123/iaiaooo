@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "AC909372": {
+      "ip": "20.169.100.172",
+      "password": "qfyuG7EKqjxB5vJPykVD",
+      "token": "",
+      "created": "2026-10-21T05:23:44.392090",
+      "expires": "2026-10-21T05:33:44.392097",
+      "activated_at": ""
+    }
+  }
 }
