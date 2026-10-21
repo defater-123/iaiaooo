@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "AC9B860D": {
+      "ip": "20.106.198.161",
+      "password": "GhPqiw8quIQxgbgZyBVB",
+      "token": "",
+      "created": "2026-10-21T19:41:18.012296",
+      "expires": "2026-10-21T19:51:18.012304",
+      "activated_at": ""
+    }
+  }
 }
