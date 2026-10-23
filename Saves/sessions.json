@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "F8C91D7E": {
+      "ip": "52.154.5.226",
+      "password": "szIL0148heCjhN8EVbNY",
+      "token": "",
+      "created": "2026-10-23T19:34:39.396913",
+      "expires": "2026-10-23T19:44:39.396919",
+      "activated_at": ""
+    }
+  }
 }
