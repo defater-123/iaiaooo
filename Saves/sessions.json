@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "1F2472A9": {
+      "ip": "135.119.39.136",
+      "password": "UH4svWTCmpMNQ3vgVLZx",
+      "token": "",
+      "created": "2026-10-23T05:28:03.126133",
+      "expires": "2026-10-23T05:38:03.126144",
+      "activated_at": ""
+    }
+  }
 }
