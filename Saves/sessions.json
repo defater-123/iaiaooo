@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "7EE54A44": {
-      "ip": "20.169.63.246",
-      "password": "pg1tqpFZyUo3jyQVmkkl",
-      "token": "",
-      "created": "2026-10-23T23:35:05.590036",
-      "expires": "2026-10-23T23:45:05.590043",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
