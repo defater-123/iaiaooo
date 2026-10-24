@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "0C6FF56C": {
-      "ip": "20.62.207.241",
-      "password": "etkWNSeeY9ktAguLon",
-      "token": "",
-      "created": "2026-10-24T22:45:46.090115",
-      "expires": "2026-10-24T22:55:46.090123",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
