@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "8BFF41F5": {
+      "ip": "4.242.196.152",
+      "password": "Uy4FnH1h759U6bdhTGT",
+      "token": "",
+      "created": "2026-10-24T09:51:38.185689",
+      "expires": "2026-10-24T10:01:38.185698",
+      "activated_at": ""
+    }
+  }
 }
