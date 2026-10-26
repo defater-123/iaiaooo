@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "75B2C184": {
-      "ip": "65.52.39.22",
-      "password": "dHUYCq6vyIRbblXrdrz",
-      "token": "",
-      "created": "2026-10-26T11:34:55.080097",
-      "expires": "2026-10-26T11:44:55.080104",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
