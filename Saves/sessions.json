@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "0695CFB5": {
-      "ip": "20.83.158.129",
-      "password": "T9IW58o64kyqUD1qvZ1r",
-      "token": "",
-      "created": "2026-10-26T20:46:18.392187",
-      "expires": "2026-10-26T20:56:18.392194",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
