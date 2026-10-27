@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "21604B9A": {
+      "ip": "52.241.147.97",
+      "password": "z9fCvnODw0reeqm0noY3",
+      "token": "",
+      "created": "2026-10-27T05:43:37.045124",
+      "expires": "2026-10-27T05:53:37.045132",
+      "activated_at": ""
+    }
+  }
 }
