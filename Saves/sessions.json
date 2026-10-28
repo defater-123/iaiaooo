@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "B75D800F": {
+      "ip": "4.236.90.165",
+      "password": "1pEbjUrBtjmgX9wiyp",
+      "token": "",
+      "created": "2026-10-28T06:22:33.608709",
+      "expires": "2026-10-28T06:32:33.608717",
+      "activated_at": ""
+    }
+  }
 }
