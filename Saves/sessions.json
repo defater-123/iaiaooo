@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "E41BEB30": {
+      "ip": "52.242.242.178",
+      "password": "hVjZnT5yRt4VuQemBrUu",
+      "token": "",
+      "created": "2026-10-29T17:06:42.844088",
+      "expires": "2026-10-29T17:16:42.844098",
+      "activated_at": ""
+    }
+  }
 }
