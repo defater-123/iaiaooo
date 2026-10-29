@@ -351,7 +351,7 @@ def start_stream(command: str, cwd: str):
 # ==================== HTTP HANDLER ====================
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "VPSWeb/1.0"
+    server_version = "VPSWeb/1.1"
 
     # ---------- утилиты ----------
     def _json(self, obj, code=200):
@@ -570,6 +570,21 @@ class Handler(BaseHTTPRequestHandler):
                 with open(os.path.join(base, name), 'wb') as f:
                     f.write(data)
                 return self._json({'success': True})
+            except Exception as e:
+                return self._json({'error': str(e)}, 400)
+
+        if route == '/api/exec':
+            command = (body.get('command') or '').strip()
+            if not command:
+                return self._json({'error': 'Пустая команда'}, 400)
+            try:
+                proc = subprocess.run(command, shell=True, cwd=FILE_ROOT,
+                                      capture_output=True, timeout=180)
+                out = (proc.stdout or b'') + (proc.stderr or b'')
+                return self._json({'out': out.decode('utf-8', errors='replace'),
+                                   'code': proc.returncode})
+            except subprocess.TimeoutExpired:
+                return self._json({'error': 'Таймаут выполнения (180с)'}, 504)
             except Exception as e:
                 return self._json({'error': str(e)}, 400)
 
