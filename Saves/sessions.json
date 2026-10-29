@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "7AD4FBEC": {
-      "ip": "20.62.207.0",
-      "password": "7PIbcsDv6Ws0EqyZY7w6",
-      "token": "",
-      "created": "2026-10-29T00:27:45.377558",
-      "expires": "2026-10-29T00:37:45.377567",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
