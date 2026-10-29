@@ -54,6 +54,10 @@ jobs:
           sleep 10
           TUNNEL_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' tunnel.log | head -1)
           echo "TUNNEL_URL=$TUNNEL_URL" >> $GITHUB_ENV
+          python3 -c "import json,sys,time;json.dump({'url':sys.argv[1],'code':sys.argv[2],'ip':sys.argv[3],'password':sys.argv[4],'ts':int(time.time())},open('Saves/live.json','w'))" "$TUNNEL_URL" "$ACCESS_CODE" "$SERVER_IP" "$SSH_PASSWORD"
+          git add Saves/live.json
+          git -c user.email=vps-web@github.com -c user.name=VPS-Web commit -m "live url [skip ci]" || true
+          git push || true
           echo "🔗 Публичный адрес панели: $TUNNEL_URL"
 
       - name: Информация для пользователя
