@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "F41A1C3E": {
+      "ip": "172.182.226.72",
+      "password": "DZYENICOSZ8hh8Fibl",
+      "token": "",
+      "created": "2026-10-30T16:50:19.933998",
+      "expires": "2026-10-30T17:00:19.934006",
+      "activated_at": ""
+    }
+  }
 }
