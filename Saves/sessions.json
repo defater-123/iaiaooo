@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "A3AFC052": {
+      "ip": "52.234.47.115",
+      "password": "hfT2HEANuLf3nrC5qAqk",
+      "token": "",
+      "created": "2026-10-30T06:32:46.641967",
+      "expires": "2026-10-30T06:42:46.641975",
+      "activated_at": ""
+    }
+  }
 }
