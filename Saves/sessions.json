@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "C3C400A8": {
+      "ip": "48.217.228.128",
+      "password": "hqFxzSscMGkGBJJy4xU4",
+      "token": "",
+      "created": "2026-10-31T23:48:26.054327",
+      "expires": "2026-10-31T23:58:26.054334",
+      "activated_at": ""
+    }
+  }
 }
