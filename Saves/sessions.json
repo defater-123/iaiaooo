@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "A119EFCB": {
+      "ip": "134.138.55.19",
+      "password": "aIWcJqHoLc4QzJofD8a",
+      "token": "",
+      "created": "2026-10-31T15:54:06.416651",
+      "expires": "2026-10-31T16:04:06.416658",
+      "activated_at": ""
+    }
+  }
 }
