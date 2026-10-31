@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "AF68FC2A": {
+      "ip": "172.202.119.162",
+      "password": "8YhAhmZ57IMtOVfeQ2f1",
+      "token": "",
+      "created": "2026-10-31T06:22:28.563749",
+      "expires": "2026-10-31T06:32:28.563755",
+      "activated_at": ""
+    }
+  }
 }
