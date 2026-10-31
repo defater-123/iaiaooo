@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "BBDEA66D": {
-      "ip": "132.196.84.25",
-      "password": "JRqNzoCPxq8gCyGIupvI",
-      "token": "",
-      "created": "2026-10-31T19:38:13.707965",
-      "expires": "2026-10-31T19:48:13.707976",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
