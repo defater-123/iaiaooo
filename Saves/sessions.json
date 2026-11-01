@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "FF15865E": {
+      "ip": "172.169.236.180",
+      "password": "wivlwNjv5wahVURozHRQ",
+      "token": "",
+      "created": "2026-11-01T23:57:55.946263",
+      "expires": "2026-11-02T00:07:55.946270",
+      "activated_at": ""
+    }
+  }
 }
