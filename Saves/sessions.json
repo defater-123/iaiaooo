@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "326B0CDD": {
-      "ip": "172.214.110.66",
-      "password": "TuvJnSUlnY1Hu0F6f2",
-      "token": "",
-      "created": "2026-11-02T20:31:48.806844",
-      "expires": "2026-11-02T20:41:48.806870",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
