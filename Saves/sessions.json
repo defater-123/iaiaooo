@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "ECD9E603": {
-      "ip": "52.159.244.82",
-      "password": "r1t1V5ycaY7j0WXdb1Wl",
-      "token": "",
-      "created": "2026-11-03T13:02:10.359102",
-      "expires": "2026-11-03T13:12:10.359122",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
