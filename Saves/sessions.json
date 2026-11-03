@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "B237BB82": {
+      "ip": "20.163.63.246",
+      "password": "ffykVEb42HDFOsQVIZK",
+      "token": "",
+      "created": "2026-11-03T21:18:23.412520",
+      "expires": "2026-11-03T21:28:23.412536",
+      "activated_at": ""
+    }
+  }
 }
