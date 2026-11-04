@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "67F0A590": {
+      "ip": "172.214.110.105",
+      "password": "SiMvIyc1NpRndfFftxiv",
+      "token": "",
+      "created": "2026-11-04T07:00:26.553716",
+      "expires": "2026-11-04T07:10:26.553736",
+      "activated_at": ""
+    }
+  }
 }
