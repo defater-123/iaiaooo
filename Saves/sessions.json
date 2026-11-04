@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "D116A034": {
+      "ip": "52.248.45.162",
+      "password": "q3JzLoF21O4z4gRzJfl4",
+      "token": "",
+      "created": "2026-11-04T18:15:38.474215",
+      "expires": "2026-11-04T18:25:38.474235",
+      "activated_at": ""
+    }
+  }
 }
