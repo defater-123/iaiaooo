@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "7EA55688": {
-      "ip": "48.217.228.130",
-      "password": "rKQx4VjahKNkMRo4hiO1",
-      "token": "",
-      "created": "2026-11-05T13:31:46.463035",
-      "expires": "2026-11-05T13:41:46.463058",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
