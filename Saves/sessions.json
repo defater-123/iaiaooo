@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "F1E290BA": {
+      "ip": "74.235.70.231",
+      "password": "oytRJy8rxkr5cwC7WKtf",
+      "token": "",
+      "created": "2026-11-07T00:26:07.408092",
+      "expires": "2026-11-07T00:36:07.408112",
+      "activated_at": ""
+    }
+  }
 }
