@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "9215EF85": {
+      "ip": "172.202.175.114",
+      "password": "UOzXm255Ro4irCgm4JON",
+      "token": "",
+      "created": "2026-11-07T06:39:32.336751",
+      "expires": "2026-11-07T06:49:32.336770",
+      "activated_at": ""
+    }
+  }
 }
