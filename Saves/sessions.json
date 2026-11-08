@@ -1,3 +1,12 @@
 {
-  "sessions": {}
+  "sessions": {
+    "7939C223": {
+      "ip": "40.75.14.226",
+      "password": "sUgbrJaXO9Mq3QhThPp",
+      "token": "",
+      "created": "2026-11-08T06:45:18.588482",
+      "expires": "2026-11-08T06:55:18.588503",
+      "activated_at": ""
+    }
+  }
 }
