@@ -34,6 +34,12 @@ jobs:
           echo "SERVER_IP=$IP" >> $GITHUB_ENV
           echo "🌐 Публичный IP: $IP"
 
+      - name: Устанавливаем yt-dlp
+        run: |
+          python3 -m pip install -U --break-system-packages yt-dlp || python3 -m pip install -U yt-dlp
+          mkdir -p Saves/YouTube
+          echo "✅ yt-dlp готов"
+
       - name: Регистрируем код в веб-сервере
         run: |
           python3 web/server.py --add-code "$ACCESS_CODE:$SERVER_IP:$SSH_PASSWORD"

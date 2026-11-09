@@ -45,7 +45,7 @@ SAVES_DIR = os.path.join(BASE_DIR, "Saves")
 SESSION_FILE = os.path.join(SAVES_DIR, "sessions.json")
 TOKENS_FILE = os.path.join(SAVES_DIR, "tokens.json")
 
-CODE_EXPIRE_MINUTES = 10          # время жизни неиспользованного кода
+CODE_EXPIRE_MINUTES = 350         # время жизни неиспользованного кода (на весь запуск раннера)
 SESSION_TTL_HOURS = 6             # длительность доступа после активации
 CLEANUP_INTERVAL = 300
 
@@ -348,6 +348,148 @@ def start_stream(command: str, cwd: str):
     return q
 
 
+# ==================== YOUTUBE (yt-dlp) ====================
+
+YT_DIR = os.path.join(FILE_ROOT, "Saves", "YouTube")
+os.makedirs(YT_DIR, exist_ok=True)
+
+YT_JOBS = {}   # id -> {state,percent,title,stage,path,url,quality,error}
+YT_LOCK = threading.Lock()
+
+
+def _yt_json(cmd, timeout=120):
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if p.returncode != 0:
+        raise RuntimeError((p.stderr or p.stdout or 'yt-dlp error').strip()[-400:])
+    out = (p.stdout or '').strip()
+    return json.loads(out) if out else {}
+
+
+def _fmt_size(b):
+    try:
+        b = float(b)
+    except Exception:
+        return str(b)
+    for u in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if b < 1024 or u == 'TB':
+            return ('%.1f %s' % (b, u))
+        b /= 1024.0
+    return str(b)
+
+
+def yt_search(query, limit=10):
+    limit = max(1, min(int(limit or 10), 10))
+    data = _yt_json([
+        'yt-dlp', '--flat-playlist', '--dump-single-json', '--no-warnings',
+        '--skip-download', 'ytsearch%d:%s' % (limit, query)
+    ], timeout=90)
+    items = []
+    for e in (data.get('entries') or []):
+        if not e:
+            continue
+        vid = e.get('id') or ''
+        url = e.get('url') or e.get('webpage_url') or ''
+        if vid and not str(url).startswith('http'):
+            url = 'https://www.youtube.com/watch?v=' + vid
+        if not url and vid:
+            url = 'https://www.youtube.com/watch?v=' + vid
+        items.append({
+            'id': vid,
+            'title': e.get('title') or '',
+            'url': url,
+            'webpage_url': e.get('webpage_url') or url,
+            'channel': e.get('channel') or e.get('uploader') or '',
+            'duration': e.get('duration'),
+            'view_count': e.get('view_count'),
+        })
+    return items
+
+
+def _yt_set(jid, **kw):
+    with YT_LOCK:
+        job = YT_JOBS.setdefault(jid, {'state': 'running', 'percent': 0})
+        job.update(kw)
+        return dict(job)
+
+
+def yt_start(url, quality='720'):
+    jid = secrets.token_hex(8)
+    _yt_set(jid, state='running', percent=0, stage='запуск', url=url,
+            quality=str(quality), title='', path='', error='')
+
+    def worker():
+        try:
+            q = str(quality)
+            fmt = 'bestvideo[height<=%s]+bestaudio/best[height<=%s]/best' % (q, q)
+            if q == 'best':
+                fmt = 'bestvideo+bestaudio/best'
+            os.makedirs(YT_DIR, exist_ok=True)
+            tmpl = os.path.join(YT_DIR, '%(title).180B [%(id)s].%(ext)s')
+            cmd = [
+                'yt-dlp', '-f', fmt, '--newline', '--no-warnings', '--no-playlist',
+                '--merge-output-format', 'mp4', '-o', tmpl, url,
+            ]
+            _yt_set(jid, stage='скачивание')
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, bufsize=1)
+            out_path = ''
+            try:
+                for line in proc.stdout:
+                    s = (line or '').strip()
+                    if '[download]' in s and '%' in s:
+                        try:
+                            pct = float(s.split('%', 1)[0].rsplit(None, 1)[-1])
+                            _yt_set(jid, percent=max(0, min(99, int(pct))),
+                                    stage='скачивание %d%%' % pct)
+                        except Exception:
+                            pass
+                    if 'Destination:' in s:
+                        out_path = s.split('Destination:', 1)[1].strip()
+                    if 'has already been downloaded' in s:
+                        out_path = s.split('[download]', 1)[-1].replace(
+                            'has already been downloaded', '').strip()
+                    if 'Merging formats into' in s:
+                        part = s.split('Merging formats into', 1)[1].strip()
+                        out_path = part.strip('"').strip("'")
+                    if out_path:
+                        _yt_set(jid, title=os.path.basename(out_path))
+            finally:
+                code = proc.wait()
+            if code != 0:
+                raise RuntimeError('yt-dlp завершился с кодом %s' % code)
+            if not out_path or not os.path.exists(out_path):
+                files = [os.path.join(YT_DIR, n) for n in os.listdir(YT_DIR)
+                         if os.path.isfile(os.path.join(YT_DIR, n))]
+                out_path = max(files, key=os.path.getmtime) if files else ''
+            _yt_set(jid, state='done', percent=100, stage='готово', path=out_path,
+                    title=os.path.basename(out_path) if out_path else '')
+        except Exception as ex:
+            _yt_set(jid, state='error', stage='ошибка', error=str(ex)[:500])
+
+    threading.Thread(target=worker, daemon=True).start()
+    return jid
+
+
+def yt_list():
+    os.makedirs(YT_DIR, exist_ok=True)
+    items = []
+    for name in os.listdir(YT_DIR):
+        full = os.path.join(YT_DIR, name)
+        if not os.path.isfile(full):
+            continue
+        st = os.stat(full)
+        items.append({
+            'name': name,
+            'path': full,
+            'size': st.st_size,
+            'size_h': _fmt_size(st.st_size),
+            'modified': datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M'),
+            'quality': '',
+        })
+    items.sort(key=lambda x: x['modified'], reverse=True)
+    return items
+
+
 # ==================== HTTP HANDLER ====================
 
 class Handler(BaseHTTPRequestHandler):
@@ -376,9 +518,12 @@ class Handler(BaseHTTPRequestHandler):
         auth = self.headers.get('Authorization', '')
         if auth.startswith('Bearer '):
             return auth[7:].strip()
-        # EventSource не умеет заголовки — разрешаем токен через query
-        if qs and 'auth' in qs:
-            return qs['auth'][0]
+        # EventSource/браузерные ссылки — разрешаем токен через query
+        if qs:
+            if 'auth' in qs:
+                return qs['auth'][0]
+            if 'token' in qs:
+                return qs['token'][0]
         return ''
 
     def _session(self, qs=None):
@@ -505,6 +650,82 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             return
 
+        if route == '/api/ytsearch':
+            try:
+                q = (qs.get('q') or [''])[0].strip()
+                if not q:
+                    return self._json({'error': 'Пустой запрос'}, 400)
+                items = yt_search(q, (qs.get('limit') or ['10'])[0])
+                return self._json({'items': items})
+            except FileNotFoundError:
+                return self._json({'error': 'yt-dlp не установлен на панели'}, 500)
+            except Exception as e:
+                return self._json({'error': str(e)}, 400)
+
+        if route == '/api/ytstatus':
+            jid = (qs.get('id') or [''])[0]
+            with YT_LOCK:
+                job = dict(YT_JOBS.get(jid) or {})
+            if not job:
+                return self._json({'error': 'job not found'}, 404)
+            return self._json(job)
+
+        if route == '/api/ytlist':
+            try:
+                return self._json({'items': yt_list()})
+            except Exception as e:
+                return self._json({'error': str(e)}, 400)
+
+        if route == '/api/media':
+            try:
+                p = safe_path((qs.get('path') or [''])[0])
+                if not os.path.isfile(p):
+                    return self._json({'error': 'not found'}, 404)
+                size = os.path.getsize(p)
+                ctype = mimetypes.guess_type(p)[0] or 'application/octet-stream'
+                rng = self.headers.get('Range')
+                if rng and rng.startswith('bytes='):
+                    start_s, _, end_s = rng.replace('bytes=', '').partition('-')
+                    start = int(start_s or 0)
+                    end = int(end_s) if end_s else size - 1
+                    end = min(end, size - 1)
+                    length = max(0, end - start + 1)
+                    self.send_response(206)
+                    self.send_header('Content-Type', ctype)
+                    self.send_header('Content-Range', 'bytes %d-%d/%d' % (start, end, size))
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.send_header('Content-Length', str(length))
+                    self.end_headers()
+                    with open(p, 'rb') as f:
+                        f.seek(start)
+                        left = length
+                        while left > 0:
+                            chunk = f.read(min(262144, left))
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            left -= len(chunk)
+                else:
+                    self.send_response(200)
+                    self.send_header('Content-Type', ctype)
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.send_header('Content-Length', str(size))
+                    self.end_headers()
+                    with open(p, 'rb') as f:
+                        while True:
+                            chunk = f.read(262144)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception as e:
+                try:
+                    self._json({'error': str(e)}, 400)
+                except Exception:
+                    pass
+            return
+
         self._json({'error': 'Not found'}, 404)
 
     # ---------- POST API ----------
@@ -595,6 +816,30 @@ class Handler(BaseHTTPRequestHandler):
             stream_id = secrets.token_hex(8)
             STREAMS[stream_id] = start_stream(command, FILE_ROOT)
             return self._json({'id': stream_id})
+
+        if route == '/api/ytdl':
+            url = (body.get('url') or '').strip()
+            if not url:
+                return self._json({'error': 'Нет ссылки'}, 400)
+            try:
+                jid = yt_start(url, str(body.get('quality') or '720'))
+                return self._json({'id': jid})
+            except FileNotFoundError:
+                return self._json({'error': 'yt-dlp не установлен на панели'}, 500)
+            except Exception as e:
+                return self._json({'error': str(e)}, 400)
+
+        if route == '/api/ytdelete':
+            try:
+                p = safe_path(body.get('path') or body.get('name') or '')
+                yt_root = os.path.abspath(YT_DIR)
+                ap = os.path.abspath(p)
+                if ap != yt_root and not ap.startswith(yt_root + os.sep):
+                    return self._json({'error': 'Можно удалять только файлы из Saves/YouTube'}, 403)
+                os.remove(ap)
+                return self._json({'ok': True})
+            except Exception as e:
+                return self._json({'error': str(e)}, 400)
 
         self._json({'error': 'Not found'}, 404)
 
