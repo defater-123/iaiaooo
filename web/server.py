@@ -829,9 +829,18 @@ class Handler(BaseHTTPRequestHandler):
                 name = os.path.basename(body.get('name', ''))
                 if not name:
                     raise ValueError('Нет имени файла')
+                target = os.path.join(base, name)
                 data = base64.b64decode(body.get('content', ''))
-                with open(os.path.join(base, name), 'wb') as f:
+                with open(target, 'wb') as f:
                     f.write(data)
+                # Saves/ директория коммитится в репо — так
+                # cookies.txt и другие данные переживают перезапуск раннера
+                try:
+                    rel = os.path.relpath(target, BASE_DIR)
+                    if not rel.startswith('..') and rel.replace('\\', '/').startswith('Saves/'):
+                        git_commit_and_push(rel)
+                except Exception:
+                    pass
                 return self._json({'success': True})
             except Exception as e:
                 return self._json({'error': str(e)}, 400)
