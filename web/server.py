@@ -460,16 +460,15 @@ def yt_start(url, quality='720'):
             tmpl = os.path.join(YT_DIR, '%(title).180B [%(id)s].%(ext)s')
             common = ['--newline', '--no-warnings', '--no-playlist',
                       '--no-overwrites', '--restrict-filenames', '-o', tmpl]
-            # Обход "Sign in to confirm you're not a bot" на IP дата-центров:
-            # сначала пробуем клиентские fallback'и YouTube, затем cookies.
+            # Обход "Sign in to confirm you're not a bot" на IP дата-центров.
+            # Вариант 1: cookies пользователя (Saves/cookies.txt — самый надёжный).
+            # Вариант 2: прокси-запросы (эндпоинт /api/ytdl не знает о сети).
+            # Вариант 3: альтернативные клиентские PROFILE'ы YouTube (часто не помогают).
             cookie_file = os.path.join(FILE_ROOT, 'Saves', 'cookies.txt')
             if os.path.isfile(cookie_file):
                 common += ['--cookies', cookie_file]
-            client_sets = [
-                ['--extractor-args', 'youtube:player_client=tv,web_safari'],
-                ['--extractor-args', 'youtube:player_client=android'],
-                [],
-            ]
+            else:
+                common += ['--extractor-args', 'youtube:player_client=tv,web_safari']
             url_arg = url
             yt = 'yt-dlp'
             if q == 'best':
@@ -478,18 +477,8 @@ def yt_start(url, quality='720'):
                 fmts = ['bv*[height<=%s]+ba/b[height<=%s]/bv*+ba/b' % (q, q),
                         'b[height<=%s][ext=mp4]/b[height<=%s]/b' % (q, q),
                         'b[ext=mp4]/b']
-            attempts = []
-            for cli in client_sets:
-                for fmt in fmts:
-                    cmd = [yt] + common
-                    if cli:
-                        cmd += cli
-                    if '+' in str(fmt):
-                        cmd += ['--merge-output-format', 'mp4']
-                    cmd += ['-f', fmt, url_arg]
-                    attempts.append(cmd)
-            attempts.append([yt] + common + ['-f', 'bv*[height<=720]+ba/b[height<=720]/b',
-                                             '--merge-output-format', 'mp4', url_arg])
+            attempts = [[yt] + common + (['--merge-output-format', 'mp4'] if '+' in f else []) + ['-f', f, url_arg]
+                        for f in fmts]
 
             last_tail = []
             out_path = ''
