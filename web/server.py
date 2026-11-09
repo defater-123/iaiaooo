@@ -462,11 +462,13 @@ def yt_start(url, quality='720'):
                       '--no-overwrites', '--restrict-filenames', '-o', tmpl]
             # Обход "Sign in to confirm you're not a bot" на IP дата-центров.
             # Приоритет 1: cookies пользователя (Saves/cookies.txt).
+            # Приоритет 2 (если cookies нет): клиент YouTube 'web_embedded' часто
+            # работает с датацентровых IP, 'tv/web_safari' уже проверены.
             cookie_file = os.path.join(FILE_ROOT, 'Saves', 'cookies.txt')
             if os.path.isfile(cookie_file):
                 common += ['--cookies', cookie_file]
             else:
-                common += ['--extractor-args', 'youtube:player_client=tv,web_safari']
+                common += ['--extractor-args', 'youtube:player_client=web_embedded']
             url_arg = url
             yt = 'yt-dlp'
             if q == 'best':
