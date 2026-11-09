@@ -458,19 +458,20 @@ def yt_start(url, quality='720'):
             q = str(quality)
             os.makedirs(YT_DIR, exist_ok=True)
             tmpl = os.path.join(YT_DIR, '%(title).180B [%(id)s].%(ext)s')
-            base = ['yt-dlp', '--newline', '--no-warnings', '--no-playlist',
-                    '--no-overwrites', '-o', tmpl, url]
+            common = ['--newline', '--no-warnings', '--no-playlist',
+                      '--no-overwrites', '--restrict-filenames', '-o', tmpl, url]
+            yt = 'yt-dlp'
             if q == 'best':
                 attempts = [
-                    ['-f', 'bv*+ba/b', '--merge-output-format', 'mp4'] + base,
-                    ['-f', 'best[ext=mp4]/best'] + base,
+                    [yt, '-f', 'bv*+ba/b', '--merge-output-format', 'mp4'] + common,
+                    [yt, '-f', 'b[ext=mp4]/b'] + common,
                 ]
             else:
                 attempts = [
-                    ['-f', 'bv*[height<=%s]+ba/b[height<=%s]/bv*+ba/b' % (q, q),
-                     '--merge-output-format', 'mp4'] + base,
-                    ['-f', 'best[height<=%s][ext=mp4]/best[height<=%s]/best' % (q, q)] + base,
-                    ['-f', 'best[ext=mp4]/best'] + base,
+                    [yt, '-f', 'bv*[height<=%s]+ba/b[height<=%s]/bv*+ba/b' % (q, q),
+                     '--merge-output-format', 'mp4'] + common,
+                    [yt, '-f', 'b[height<=%s][ext=mp4]/b[height<=%s]/b' % (q, q, q)] + common,
+                    [yt, '-f', 'b[ext=mp4]/b'] + common,
                 ]
 
             last_tail = []
