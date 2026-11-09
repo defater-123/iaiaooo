@@ -37,6 +37,8 @@ jobs:
       - name: Устанавливаем yt-dlp
         run: |
           python3 -m pip install -U --break-system-packages yt-dlp || python3 -m pip install -U yt-dlp
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg || true
+          ffmpeg -version | head -1 || true
           mkdir -p Saves/YouTube
           echo "✅ yt-dlp готов"
 

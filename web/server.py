@@ -412,6 +412,42 @@ def _yt_set(jid, **kw):
         return dict(job)
 
 
+def _yt_run(jid, url, cmd):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1)
+    out_path = ''
+    tail = []
+    try:
+        for line in proc.stdout:
+            s = (line or '').rstrip()
+            if s:
+                tail.append(s)
+                if len(tail) > 60:
+                    del tail[:len(tail) - 60]
+            st = s.strip()
+            if '[download]' in st and '%' in st:
+                try:
+                    pct = float(st.split('%', 1)[0].rsplit(None, 1)[-1])
+                    _yt_set(jid, percent=max(0, min(99, int(pct))),
+                            stage='скачивание %d%%' % pct)
+                except Exception:
+                    pass
+            if 'Destination:' in st:
+                out_path = st.split('Destination:', 1)[1].strip()
+                _yt_set(jid, title=os.path.basename(out_path))
+            if 'has already been downloaded' in st:
+                out_path = st.split('[download]', 1)[-1].replace(
+                    'has already been downloaded', '').strip()
+                _yt_set(jid, title=os.path.basename(out_path))
+            if 'Merging formats into' in st:
+                part = st.split('Merging formats into', 1)[1].strip()
+                out_path = part.strip('"').strip("'")
+                _yt_set(jid, title=os.path.basename(out_path))
+    finally:
+        code = proc.wait()
+    return code, out_path, tail
+
+
 def yt_start(url, quality='720'):
     jid = secrets.token_hex(8)
     _yt_set(jid, state='running', percent=0, stage='запуск', url=url,
@@ -420,43 +456,43 @@ def yt_start(url, quality='720'):
     def worker():
         try:
             q = str(quality)
-            fmt = 'bestvideo[height<=%s]+bestaudio/best[height<=%s]/best' % (q, q)
-            if q == 'best':
-                fmt = 'bestvideo+bestaudio/best'
             os.makedirs(YT_DIR, exist_ok=True)
             tmpl = os.path.join(YT_DIR, '%(title).180B [%(id)s].%(ext)s')
-            cmd = [
-                'yt-dlp', '-f', fmt, '--newline', '--no-warnings', '--no-playlist',
-                '--merge-output-format', 'mp4', '-o', tmpl, url,
-            ]
-            _yt_set(jid, stage='скачивание')
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, bufsize=1)
+            base = ['yt-dlp', '--newline', '--no-warnings', '--no-playlist',
+                    '--no-overwrites', '-o', tmpl, url]
+            if q == 'best':
+                attempts = [
+                    ['-f', 'bv*+ba/b', '--merge-output-format', 'mp4'] + base,
+                    ['-f', 'best[ext=mp4]/best'] + base,
+                ]
+            else:
+                attempts = [
+                    ['-f', 'bv*[height<=%s]+ba/b[height<=%s]/bv*+ba/b' % (q, q),
+                     '--merge-output-format', 'mp4'] + base,
+                    ['-f', 'best[height<=%s][ext=mp4]/best[height<=%s]/best' % (q, q)] + base,
+                    ['-f', 'best[ext=mp4]/best'] + base,
+                ]
+
+            last_tail = []
             out_path = ''
-            try:
-                for line in proc.stdout:
-                    s = (line or '').strip()
-                    if '[download]' in s and '%' in s:
-                        try:
-                            pct = float(s.split('%', 1)[0].rsplit(None, 1)[-1])
-                            _yt_set(jid, percent=max(0, min(99, int(pct))),
-                                    stage='скачивание %d%%' % pct)
-                        except Exception:
-                            pass
-                    if 'Destination:' in s:
-                        out_path = s.split('Destination:', 1)[1].strip()
-                    if 'has already been downloaded' in s:
-                        out_path = s.split('[download]', 1)[-1].replace(
-                            'has already been downloaded', '').strip()
-                    if 'Merging formats into' in s:
-                        part = s.split('Merging formats into', 1)[1].strip()
-                        out_path = part.strip('"').strip("'")
-                    if out_path:
-                        _yt_set(jid, title=os.path.basename(out_path))
-            finally:
-                code = proc.wait()
-            if code != 0:
-                raise RuntimeError('yt-dlp завершился с кодом %s' % code)
+            for i, cmd in enumerate(attempts):
+                _yt_set(jid, stage='скачивание' + (' (попытка %d)' % (i + 1) if i else ''),
+                        percent=0 if i else None)
+                code, out_path, last_tail = _yt_run(jid, url, cmd)
+                if code == 0:
+                    break
+                if i < len(attempts) - 1:
+                    _yt_set(jid, stage='повтор другим форматом...')
+            else:
+                detail = ''
+                for line in reversed(last_tail):
+                    if 'ERROR' in line or 'error' in line:
+                        detail = line
+                        break
+                if not detail and last_tail:
+                    detail = last_tail[-1]
+                raise RuntimeError((detail or ('yt-dlp код %s' % code))[:500])
+
             if not out_path or not os.path.exists(out_path):
                 files = [os.path.join(YT_DIR, n) for n in os.listdir(YT_DIR)
                          if os.path.isfile(os.path.join(YT_DIR, n))]
