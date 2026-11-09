@@ -470,7 +470,7 @@ def yt_start(url, quality='720'):
                 attempts = [
                     [yt, '-f', 'bv*[height<=%s]+ba/b[height<=%s]/bv*+ba/b' % (q, q),
                      '--merge-output-format', 'mp4'] + common,
-                    [yt, '-f', 'b[height<=%s][ext=mp4]/b[height<=%s]/b' % (q, q, q)] + common,
+                    [yt, '-f', 'b[height<=%s][ext=mp4]/b[height<=%s]/b' % (q, q)] + common,
                     [yt, '-f', 'b[ext=mp4]/b'] + common,
                 ]
 
