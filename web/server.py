@@ -461,9 +461,8 @@ def yt_start(url, quality='720'):
             common = ['--newline', '--no-warnings', '--no-playlist',
                       '--no-overwrites', '--restrict-filenames', '-o', tmpl]
             # Обход "Sign in to confirm you're not a bot" на IP дата-центров.
-            # Приоритет 1: cookies пользователя (Saves/cookies.txt).
-            # Приоритет 2 (если cookies нет): клиент YouTube 'web_embedded' часто
-            # работает с датацентровых IP, 'tv/web_safari' уже проверены.
+            # Основной вариант: cookies пользователя (Saves/cookies.txt).
+            # Если cookies нет — proxy= Bearer API'и-фолбэк, web_embedded client.
             cookie_file = os.path.join(FILE_ROOT, 'Saves', 'cookies.txt')
             if os.path.isfile(cookie_file):
                 common += ['--cookies', cookie_file]
