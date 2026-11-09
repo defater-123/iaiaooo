@@ -461,9 +461,7 @@ def yt_start(url, quality='720'):
             common = ['--newline', '--no-warnings', '--no-playlist',
                       '--no-overwrites', '--restrict-filenames', '-o', tmpl]
             # Обход "Sign in to confirm you're not a bot" на IP дата-центров.
-            # Вариант 1: cookies пользователя (Saves/cookies.txt — самый надёжный).
-            # Вариант 2: прокси-запросы (эндпоинт /api/ytdl не знает о сети).
-            # Вариант 3: альтернативные клиентские PROFILE'ы YouTube (часто не помогают).
+            # Приоритет 1: cookies пользователя (Saves/cookies.txt).
             cookie_file = os.path.join(FILE_ROOT, 'Saves', 'cookies.txt')
             if os.path.isfile(cookie_file):
                 common += ['--cookies', cookie_file]
