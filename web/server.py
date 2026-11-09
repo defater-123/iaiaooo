@@ -459,20 +459,37 @@ def yt_start(url, quality='720'):
             os.makedirs(YT_DIR, exist_ok=True)
             tmpl = os.path.join(YT_DIR, '%(title).180B [%(id)s].%(ext)s')
             common = ['--newline', '--no-warnings', '--no-playlist',
-                      '--no-overwrites', '--restrict-filenames', '-o', tmpl, url]
+                      '--no-overwrites', '--restrict-filenames', '-o', tmpl]
+            # Обход "Sign in to confirm you're not a bot" на IP дата-центров:
+            # сначала пробуем клиентские fallback'и YouTube, затем cookies.
+            cookie_file = os.path.join(FILE_ROOT, 'Saves', 'cookies.txt')
+            if os.path.isfile(cookie_file):
+                common += ['--cookies', cookie_file]
+            client_sets = [
+                ['--extractor-args', 'youtube:player_client=tv,web_safari'],
+                ['--extractor-args', 'youtube:player_client=android'],
+                [],
+            ]
+            url_arg = url
             yt = 'yt-dlp'
             if q == 'best':
-                attempts = [
-                    [yt, '-f', 'bv*+ba/b', '--merge-output-format', 'mp4'] + common,
-                    [yt, '-f', 'b[ext=mp4]/b'] + common,
-                ]
+                fmts = ['bv*+ba/b', 'b[ext=mp4]/b']
             else:
-                attempts = [
-                    [yt, '-f', 'bv*[height<=%s]+ba/b[height<=%s]/bv*+ba/b' % (q, q),
-                     '--merge-output-format', 'mp4'] + common,
-                    [yt, '-f', 'b[height<=%s][ext=mp4]/b[height<=%s]/b' % (q, q)] + common,
-                    [yt, '-f', 'b[ext=mp4]/b'] + common,
-                ]
+                fmts = ['bv*[height<=%s]+ba/b[height<=%s]/bv*+ba/b' % (q, q),
+                        'b[height<=%s][ext=mp4]/b[height<=%s]/b' % (q, q),
+                        'b[ext=mp4]/b']
+            attempts = []
+            for cli in client_sets:
+                for fmt in fmts:
+                    cmd = [yt] + common
+                    if cli:
+                        cmd += cli
+                    if '+' in str(fmt):
+                        cmd += ['--merge-output-format', 'mp4']
+                    cmd += ['-f', fmt, url_arg]
+                    attempts.append(cmd)
+            attempts.append([yt] + common + ['-f', 'bv*[height<=720]+ba/b[height<=720]/b',
+                                             '--merge-output-format', 'mp4', url_arg])
 
             last_tail = []
             out_path = ''
