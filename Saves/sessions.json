@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "CE1D761F": {
-      "ip": "134.138.42.129",
-      "password": "6XCvP5PJUAH1GwOsb",
-      "token": "",
-      "created": "2026-11-09T00:08:38.291851",
-      "expires": "2026-11-09T00:18:38.291871",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
