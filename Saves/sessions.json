@@ -1,12 +1,3 @@
 {
-  "sessions": {
-    "A37C065E": {
-      "ip": "172.182.193.136",
-      "password": "bmj7CAJCA1tRpNwax3PA",
-      "token": "",
-      "created": "2026-11-09T07:16:15.065385",
-      "expires": "2026-11-09T07:26:15.065406",
-      "activated_at": ""
-    }
-  }
+  "sessions": {}
 }
