@@ -7,6 +7,14 @@
       "created": "2026-11-12T07:48:31.623365",
       "expires": "2026-11-12T13:38:31.623387",
       "activated_at": ""
+    },
+    "00FF2C3E": {
+      "ip": "74.235.102.244",
+      "password": "PtbT4FRbBjGPrpDT",
+      "token": "",
+      "created": "2026-11-12T18:37:56.399030",
+      "expires": "2026-11-13T00:27:56.399053",
+      "activated_at": ""
     }
   }
 }
