@@ -7,6 +7,14 @@
       "created": "2026-11-13T21:41:09.557766",
       "expires": "2026-11-14T03:31:09.557783",
       "activated_at": ""
+    },
+    "D78B69DE": {
+      "ip": "20.84.246.52",
+      "password": "N8XNtexvhMqCGVCWC6bW",
+      "token": "",
+      "created": "2026-11-14T07:06:00.016970",
+      "expires": "2026-11-14T12:56:00.016987",
+      "activated_at": ""
     }
   }
 }
